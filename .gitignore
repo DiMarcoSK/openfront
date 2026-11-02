@@ -19,3 +19,6 @@ build/gfx/*.h
 # local meta
 .DS_Store
 Thumbs.db
+# debate/run case artifacts are idempotent and re-derivable from the palace
+cases/raw
+cases/*/raw

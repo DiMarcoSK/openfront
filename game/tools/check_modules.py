@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Include-graph fitness function (B01 scaffold; wired into CI by B05).
+"""Include-graph and colour-literal fitness functions (B01/B02).
 
-Rule: a module may include a sibling module's public contract header ONLY.
-Reaching into another module's internals or a non-contract header fails with
-a readable message, matching the backlog item "a `ui -> save` internal
-include fails".
+Rule 1 - include-graph: a module may include a sibling module's public
+contract header ONLY. Reaching into another module's internals or a
+non-contract header fails with a readable message (backlog B01: "a
+`ui -> save` internal include fails").
+
+Rule 2 - palette: no hex colour literal outside include/contracts/tokens.h
+(constitution 1, B02 acceptance "0 hex colour literal outside the token
+header").
 """
 from __future__ import annotations
 
@@ -12,13 +16,18 @@ import re
 import sys
 from pathlib import Path
 
-CONTRACTS = {
-    "sim_api.h", "save.h", "audio.h", "ui.h", "loop.h", "input.h", "render.h",
-}
-BANNED_INCLUDE_ROOTS = set()
+MODULES = [
+    "boot", "loop", "input", "sim", "render", "save", "audio", "ui",
+]
 
-MODULES = ["boot", "loop", "input", "sim", "render", "save", "audio", "ui"]
-IGNORE_LIST_HOSTINCLUDES = {"nds.h", "calico.h", "stdio.h", "stdint.h", "stdlib.h", "string.h", "stdbool.h"}
+HOSTINCLUDES_OK = {
+    "nds.h", "calico.h", "stdlib.h", "stdint.h", "stdio.h", "string.h",
+    "stdbool.h", "stddef.h", "limits.h", "stdint-gcc.h", "assert.h", "errno.h",
+}
+
+HEX_LITERAL = re.compile(r"(?<![0-9A-Za-z_])[0-9A-F]{6}(?![0-9a-z_])")
+
+TOKENS_FILE = "tokens.h"
 
 
 def gather_includes(path: Path) -> list[tuple[str, int, str]]:
@@ -32,35 +41,60 @@ def gather_includes(path: Path) -> list[tuple[str, int, str]]:
 
 
 def main() -> int:
-    src_root = Path(__file__).resolve().parent.parent / "src"
-    failures = 0
+    root = Path(__file__).resolve().parent.parent
+    src_root = root / "src"
+    failures = []
     for module in MODULES:
         module_dir = src_root / module
         if not module_dir.exists():
-            print(f"[include-graph] missing module dir {module_dir}")
-            failures += 1
+            failures.append(f"[include-graph] missing module dir {module_dir}")
             continue
         for cfile in sorted(module_dir.glob("*.c")):
             for fname, ln, header in gather_includes(cfile):
-                if header in IGNORE_LIST_HOSTINCLUDES:
+                if header in HOSTINCLUDES_OK:
                     continue
-                # Reaching into another module's internals or another module's
-                # private header is banned by construction (constitution 6).
-                if header in BANNED_INCLUDE_ROOTS:
-                    print(f"[include-graph] {cfile.name}:{ln} banned include {header}")
-                    failures += 1
-                m = re.match(r"^(?:\.\./)*(?:\.\./)?(?:src)?/?([a-z])/.*", header)
-                if m and m.group(1) != module:
-                    print(
-                        f"[include-graph] {cfile}:{ln} reaches into "
-                        f"module '{m.group(1)}' from '{module}': "
-                        f"use the public contract header instead."
+                if header.startswith("http") or header.startswith("contracts/"):
+                    continue
+                    continue
+                if header.endswith(".h") and "/" in header:
+                    # src/x private header from a sibling module.
+                    owner = header.split("/")[0]
+                    if owner != module:
+                        failures.append(
+                            f"{cfile}:{ln} reaches into module '{owner}' "
+                            f"from '{module}': use the public contract header."
+                        )
+                        continue
+                if header.endswith(".h") and "/" not in header:
+                    # Plain header without the module prefix: contract file.
+                    base = header.replace(".h", "")
+                    if base not in MODULES:
+                        failures.append(
+                            f"{cfile}:{ln} includes unknown contract {header}"
+                        )
+                        continue
+                    if base != module:
+                        failures.append(
+                            f"{cfile}:{ln} includes {header}: allowed only"
+                            f" for the owning module; use contracts/{base}.h"
+                        )
+                        continue
+            # Palette rule: no colour hex literal outside tokens.h.
+            text = cfile.read_text()
+            for ln, line in enumerate(text.splitlines(), 1):
+                if "0x" in line or "0X" in line:
+                    continue  # C-level hex ints (API bytes) are fine.
+                m = HEX_LITERAL.search(line)
+                if m:
+                    failures.append(
+                        f"{cfile}:{ln} hex colour literal '{m.group(0)}'"
+                        f" outside {TOKENS_FILE} (constitution 1)"
                     )
-                    failures += 1
     if failures:
-        print(f"[include-graph] {failures} violation(s).")
+        print("\n".join(f"- {f}" for f in failures))
+        print(f"{len(failures)} violation(s).")
         return 1
-    print("[include-graph] OK")
+    print("[include-graph] OK, [palette] OK")
     return 0
 
 

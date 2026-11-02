@@ -1,6 +1,6 @@
 # War Table - Nintendo DS homebrew ROM (B01 scaffold)
 # Modules: boot loop input sim render save audio ui
-# Targets: clean | rom | budget | run | include-graph | help
+main main: make clean, make rom, make budget, make run, make include-graph
 # Toolchain: Windows devkitARM driven through WSL interop (see tools/setup.sh).
 
 # All flags passed to the compiler/linker use Windows-style paths (C:/...)
@@ -44,6 +44,7 @@ CFLAGS := \
 	$(TYPEFLAGS) \
 	-IC:/devkitPro/libnds/include \
 	-IC:/devkitPro/calico/include \
+	-IC:/Users/black/Documents/labs/openfront/game/include \
 	-I$(CURDIR) \
 	-I$(CURDIR)/include \
 	-Ibuild/gfx \
@@ -110,6 +111,10 @@ clean:
 budget:
 	./tools/check_budget.sh
 
+regen:
+	python3 tools/gen_tokens.py
+	python3 tools/check_modules.py
+
 include-graph:
 	@python3 tools/check_modules.py
 
@@ -120,4 +125,6 @@ setup:
 	bash tools/setup.sh
 
 help:
-	@echo "make rom | make clean | make budget | make run | make include-graph"
+	@echo "make rom | make clean | make budget | make run | make include-graph | make regen"
+
+

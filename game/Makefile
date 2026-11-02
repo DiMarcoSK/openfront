@@ -61,7 +61,7 @@ LDFLAGS := \
 	-specs=C:/devkitPro/calico/share/ds9.specs \
 	-Wl,-Map,$(TARGET).map
 
-LIBS := -lnds9 -lcalico_ds9
+LIBS := -lnds9 -lcalico_ds9 -lfat -lcalico_ds9
 
 SRCS := $(foreach m,$(MODULES),$(wildcard src/$(m)/*.c))
 OBJS := $(patsubst src/%.c, $(BUILD)/src/%.o, $(SRCS))

@@ -7,11 +7,29 @@ cd "$(dirname "$0")/../.." || exit 1
 
 BIN_DIR="tests/host/bin"
 CFLAGS="-Wall -Wextra -std=c11 -Iinclude -Isrc -Itests/host"
-BIN="$BIN_DIR/test_queue"
-
+BIN_DIR="$(pwd)/$BIN_DIR"
 mkdir -p "$BIN_DIR"
-gcc $CFLAGS tests/host/test_queue.c \
-  src/queue/queue.c src/input/input.c src/sim/sim.c src/save/save.c \
-  -o "$BIN" -lm
-"$BIN"
+SAVE_INC="-Isrc/save"
+
+build() {
+  # $1 = test source, $2 = module sources
+  local t="$1"
+  shift
+  gcc $CFLAGS "$t" "$@" $SAVE_INC -o "$BIN_DIR/$(basename "$t" .c)" -lm
+}
+
+run() {
+  "$BIN_DIR/$(basename "$1" .c)"
+}
+
+# B03: the single conduit (queue/input/sim only; save.c's boot path pulls
+# the backend + slot protocol, so it is linked in the B06 suite instead).
+build tests/host/test_queue.c src/queue/queue.c src/input/input.c src/sim/sim.c
+run tests/host/test_queue.c
+
+# B06: the save core (slots + crc32; save.c is the thin shell consumed by
+# the boot path and shares the high-level state with the emulator build).
+build tests/host/test_save.c src/save/slots.c src/save/crc32.c
+run tests/host/test_save.c
+
 echo "host tests passed."

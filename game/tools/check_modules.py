@@ -23,6 +23,7 @@ MODULES = [
 HOSTINCLUDES_OK = {
     "nds.h", "calico.h", "stdlib.h", "stdint.h", "stdio.h", "string.h",
     "stdbool.h", "stddef.h", "limits.h", "stdint-gcc.h", "assert.h", "errno.h",
+    "fat.h",
 }
 
 HEX_LITERAL = re.compile(r"(?<![0-9A-Za-z_])[0-9A-F]{6}(?![0-9a-z_])")

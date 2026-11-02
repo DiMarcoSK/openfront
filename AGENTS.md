@@ -2,11 +2,14 @@
 
 ## Read me first: what is done and what is trivial
 
-B01, B02, B03, B04 and B06 of the backlog are **DONE and TRIVIAL — do not
-redo them**. Only the remaining items on the critical path are actual work:
+B01, B02, B03, B04, B06, **B07, B08, B09 and B10** of the backlog are
+**DONE and TRIVIAL — do not redo them**. Phase 1 is closed: the ROM already
+runs the full loop (title -> campaign -> base -> battle -> result -> reboot).
+Only the remaining items on the critical path are actual work:
 
-- Next up, in order: **B07 (boot -> title -> campaign handoff)** then
-  **B08 (province list + treasury)**, then B09 / B10 / B19.
+- Next up, in order: **B05 (harness remainder: cycle, golden frame,
+  validate.sh contrast, save profiles)**, then **B11 (title failure
+  paths)**, **B12 (campaign command path)** and **B13/B14/B19**.
 - **B05 is partial** (include-graph + byte-budget gates exist; the cycle
   harness, golden frame hash, validate.sh contrast and emulator save
   profiles still lack a harness).

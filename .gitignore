@@ -1,3 +1,5 @@
+# debate output is re-derivable from the palace: only the changed code matters.
+cases/
 # build products, maps, generated c/bin assets and the .nds binary.
 *.o
 *.elf

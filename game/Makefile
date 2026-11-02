@@ -1,7 +1,10 @@
 # War Table - Nintendo DS homebrew ROM (B01 scaffold)
-# Modules: boot loop input sim render save audio ui
-main main: make clean, make rom, make budget, make run, make include-graph
+# Modules: boot loop input sim render save audio ui queue
+# Targets: clean | rom | budget | run | include-graph | regen | test-host |
+#          memory | memory-check | rtk | help
 # Toolchain: Windows devkitARM driven through WSL interop (see tools/setup.sh).
+# History: MemPalace wing openfront-war-table via tools/memory.sh.
+# Token compression: RTK via tools/rtk.sh (see .rtk/filters.toml).
 
 # All flags passed to the compiler/linker use Windows-style paths (C:/...)
 # because the devkitARM .exe drivers run as a Windows process. The .exe files
@@ -68,7 +71,6 @@ OBJS := $(patsubst src/%.c, $(BUILD)/src/%.o, $(SRCS))
 GFX_SRC := $(sort $(wildcard data/*.png))
 GFX_OBJS := $(patsubst $(DATA)/%.png, $(BUILD)/gfx/%.o, $(GFX_SRC))
 
-.PHONY: all clean rom budget run include-graph regen test-host help setup
 .DEFAULT_GOAL := rom
 
 # ---------------------------------------------------------------------------
@@ -124,10 +126,39 @@ include-graph:
 run: $(TARGET).nds
 	RUN=melonds ./tools/run.sh $(TARGET).nds
 
+# Project memory. `make memory` mines cases/ + game/ into MemPalace and
+# `make memory-check` prints the top recall so the agent knows it works.
+memory:
+	bash tools/memory.sh mine
+
+memory-check:
+	bash tools/memory.sh check
+
+# RTK shim: every CLI can be routed through the token compressor, and the
+# project filters in .rtk/filters.toml carry the WAR TABLE specifics.
+rtk-%:
+	bash tools/rtk.sh $(*) $(RTK_ARGS)
+
+.PHONY: all clean rom budget run include-graph regen test-host memory memory-check rtk help setup
+.DEFAULT_GOAL := rom
+
 setup:
 	bash tools/setup.sh
 
+
+# ---------------------------------------------------------------------------
+# Help
+# ---------------------------------------------------------------------------
 help:
-	@echo "make rom | make clean | make budget | make run | make include-graph | make regen"
-
-
+	@echo "War Table make targets:"
+	@echo "  rom            build the .nds (default)"
+	@echo "  clean          rm build/ + .elf + .nds + .map"
+	@echo "  budget         print ROM/RAM/VRAM and enforce the ceilings"
+	@echo "  run            boot wartable.nds in melonDS (RUN=melonds)"
+	@echo "  test-host      gcc unit tests for the B03 + B06 modules"
+	@echo "  include-graph  module isolation + palette gates"
+	@echo "  regen          rewrite tokens.h and re-run the gates"
+	@echo "  memory         mine cases/ + game/ into MemPalace"
+	@echo "  memory-check   print the top 3 War Table recall hits"
+	@echo "  rtk-<cmd>      run RTK <cmd> through tools/rtk.sh"
+	@echo "  setup          one-time seeding of C:/devkitPro/winbin"

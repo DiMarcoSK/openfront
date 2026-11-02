@@ -1,0 +1,75 @@
+# Project-local RTK filters — commit this file with your repo.
+# Filters here override user-global and built-in filters.
+# Docs: https://github.com/rtk-ai/rtk#custom-filters
+schema_version = 1
+
+# devkitARM build - the compiler path is long, the objdump is huge, the
+# exit code is the only signal we need.
+
+[filters.wartable-build]
+description = "Compact `make rom` output (linker + ndstool)"
+match_command = "^make\\s+(rom|clean|budget)$"
+match_cwd = "\\bgames?\\b|^war_table"
+strip_ansi = true
+strip_lines_matching = [
+    "^\\s*(CC|GRIT|LINK|NDS):",
+    "^make\\[?\\d?\\]?:",
+    "^/mnt/c/devkitPro",
+    "^(ar|as|cc1(cc)?plus|collect2|cpp|gcc|g\\+\\+|grit|ld|ndstool|nm|objcopy|ranlib|size|strings|bin2s)",
+    "^C:[/\\\\]devkitPro",
+    "^\\s*(\\.text|\\.data|\\.bss|EXT_|Out-elf|Out-file|Out-size)",
+]
+max_lines = 40
+on_empty = "make: ok"
+
+[filters.wartable-host-tests]
+description = "Compact `make test-host`; only failures carry a number"
+match_command = "^make\\s+test-host\\$|test-host\\$|^bash\\s+tests/host/run\\.sh"
+strip_ansi = true
+strip_lines_matching = [
+    "^== host:",
+    "host tests passed",
+    "^\\s*Bin-dir:",
+]
+max_lines = 30
+keep_lines_matching = [
+    "B03 queue:",
+    "B03 input cap:",
+    "save: boot scan ok",
+    "save: 1000 injected",
+    "host tests passed",
+]
+on_empty = "make test-host: all green"
+
+[filters.wartable-gates]
+description = "Compact the include-graph + budget + regen gates"
+match_command = "tools/check_(modules|budget)|make\\s+(budget|regen|include-graph)\\b"
+strip_ansi = true
+strip_lines_matching = [
+    "^\\s*.*\\.c:",
+    "^C:[/\\\\]devkitPro",
+    "^\\s*$",
+    "^te",
+]
+keep_lines_matching = [
+    "^\\[include-graph\\]",
+    "^budget:",
+    "ROM\\s+\\d+ B",
+    "RAM\\s+\\d+ KB",
+    "VRAM\\s+\\d+ KB",
+    "tokens.h:",
+    "violation\\(s\\)",
+]
+max_lines = 20
+on_empty = "gates: ok"
+
+[filters.rtk-style-cmd]
+description = "Compact cmd.exe output while running rtk through WSL interop"
+match_command = "^(cmd\\.exe|.*\\\\cmd\\.exe)\\s+/c\\s"
+strip_ansi = true
+strip_lines_matching = [
+    "^Microsoft Windows \\[Version",
+    "^\\(c\\) Microsoft Corporation",
+    "^\\s*$",
+]
+max_lines = 40

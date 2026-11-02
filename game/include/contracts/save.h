@@ -85,6 +85,31 @@ save_status_t save_commit(const save_aggregate_t *snap);
 /* save_load(): decode the aggregate and return it for sim.                */
 save_status_t save_load(save_aggregate_t *out);
 
+/* ---- additive B07: per-slot title cards (spec-01 R1/R5) ----------------
+ * Additive to v1 (constitution 6): nothing above changes signed fields or
+ * the pinned sizes; the title consumes snapshots only.
+ */
+#pragma pack(push, 1)
+typedef struct save_slot_info {
+	uint8_t valid;      /* CRC-verified v1 record present                */
+	uint8_t blank;      /* never written yet (no record, not damage)    */
+	uint16_t day;       /* header day when valid                        */
+	uint32_t treasury;  /* payload treasury when valid                  */
+	uint32_t seq;       /* header seq when valid                        */
+} save_slot_info_t;
+#pragma pack(pop)
+
+_Static_assert(sizeof(save_slot_info_t) == 12, "save slot info pins to 12 B");
+
+/* save_slots(): one descriptor per slot for the title cards, cached from
+ * the boot scan. A slot may be valid, blank (first boot) or damaged.      */
+void save_slots(save_slot_info_t out[2]);
+
+/* save_load_slot(): decode slot (0..1); returns the module status,
+ * VERIFY_FAIL when that slot holds no verified record - Continue on a
+ * damaged slot can never load (spec-01 R5).                               */
+save_status_t save_load_slot(int slot, save_aggregate_t *out);
+
 /* save_erase(): both slots blank; Erase = Undo 5 s lives in ui (spec-06). */
 save_status_t save_erase(void);
 

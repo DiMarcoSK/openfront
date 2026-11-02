@@ -18,14 +18,53 @@ static uint32_t commit_seq;
 static bool dirty;
 static uint16_t pending_day;
 
+/* Additive B07: per-slot descriptors cached from the boot scan, so the
+ * title cards read the save contract without touching slots.c.            */
+static save_slot_info_t slot_infos[2];
+static bool slots_scanned;
+
+static void record_slot_infos(void) {
+	for (int i = 0; i < 2; ++i) {
+		slot_info(block, i, &slot_infos[i]);
+	}
+	slots_scanned = true;
+}
+
 /* The snapshot sim hands us; save owns no economy state (constitution 6). */
 static save_aggregate_t restored;
 
 void save_init(void) {
 	backend_probe();
 	slot_boot_scan(block, &active_slot, &restored, &current_status);
+	record_slot_infos();
 	commit_seq = 0u;
 	dirty = false;
+}
+
+void save_slots(save_slot_info_t out[2]) {
+	if (out == NULL) {
+		return;
+	}
+	for (int i = 0; i < 2; ++i) {
+		out[i] = slot_infos[i];
+	}
+	(void)slots_scanned;
+}
+
+save_status_t save_load_slot(int slot, save_aggregate_t *out) {
+	if (out == NULL) {
+		return SAVE_STATUS_NO_CARD;
+	}
+	/* Continue never loads a damaged slot (spec-01 R5).                  */
+	if (slot < 0 || slot > 1 || !slot_infos[slot].valid) {
+		return SAVE_STATUS_VERIFY_FAIL;
+	}
+	save_slot_t img;
+	if (!slot_decode_index(block, slot, &img)) {
+		return SAVE_STATUS_VERIFY_FAIL;
+	}
+	memmove(out, &img.payload, sizeof *out);
+	return SAVE_STATUS_OK;
 }
 
 save_status_t save_status(void) {

@@ -42,12 +42,15 @@ void loop_start(void) {
 	while (running && pmMainLoop()) {
 		swiWaitForVBlank();
 		scanKeys();
-		if (keysDown() & KEY_START) {
+		/* START exits outside the title only: on the title it is the
+		 * Settings entry (spec-01 6.5), delivered through the conduit. */
+		if (ui_screen() != UI_SCREEN_TITLE && (keysDown() & KEY_START)) {
 			running = false;
 		}
-		/* One conduit call per frame; sim_step on the 10 Hz boundary.  */
+		/* One conduit call per frame; ADR-0001: the title is a menu, so
+		 * the 10 Hz economy step runs in Campaign only.               */
 		queue_frame(frame_counter);
-		if ((frame_counter % 6u) == 0u) {
+		if ((frame_counter % 6u) == 0u && ui_screen() == UI_SCREEN_CAMPAIGN) {
 			sim_step(1u);
 			diag_push(DIAG_KEY_TICK, frame_counter / 6u);
 		}

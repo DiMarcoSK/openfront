@@ -11,6 +11,7 @@
 static sim_snapshot_t snap;
 static sim_cmd_t ring[32];
 static uint8_t ring_head, ring_tail, ring_depth;
+static uint32_t tick_count;
 
 #define CMD_RING_CAP 32u
 
@@ -23,6 +24,7 @@ void sim_init(uint32_t seed) {
 	snap.selected = 0u;
 	snap.flags = 0u;
 	ring_head = ring_tail = ring_depth = 0u;
+	tick_count = 0u;
 	(void)seed;
 }
 
@@ -41,7 +43,22 @@ bool sim_enqueue(const sim_cmd_t *cmd) {
 	return true;
 }
 
+/* sim_ingest_save(): apply a verified aggregate; the title is a menu
+ * (ADR-0001), so the tick counter freezes at 0 on entry (spec-01 R2).     */
+void sim_ingest_save(uint32_t treasury, uint16_t day) {
+	snap.treasury = treasury;
+	snap.day = day;
+	snap.selected = 0u;
+	snap.flags = 0u;
+	tick_count = 0u;
+}
+
+uint32_t sim_tick(void) {
+	return tick_count;
+}
+
 void sim_step(uint8_t ticks) {
+	tick_count += (uint32_t)ticks;
 	for (uint8_t i = 0; i < ticks; ++i) {
 		if (!q_empty()) {
 			const sim_cmd_t cmd = ring[ring_tail];

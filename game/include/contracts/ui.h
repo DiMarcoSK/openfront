@@ -20,6 +20,18 @@ typedef enum ui_screen {
 	UI_SCREEN_NONE,
 } ui_screen_t;
 
+/* ---- additive B07: input entry (spec-01 T008/T009) ---------------------
+ * One entry per event, consumed by the current screen; ui emits commands
+ * only and never reads raw NDS input state.
+ */
+typedef enum ui_event_kind {
+	UI_EVT_KEY = 0,    /* value = libnds keysDown bit mask                 */
+	UI_EVT_TOUCH = 1,  /* value = (px << 8) | py                           */
+} ui_event_kind_t;
+
+/* ui_input(): deliver one input event to the active screen.              */
+void ui_input(uint8_t kind, uint32_t value);
+
 /* ui_screen(): current screen (spec 01-06 map it to the state machine).  */
 ui_screen_t ui_screen(void);
 

@@ -12,12 +12,29 @@
 #include "crc32.h"
 #include "contracts/save.h"
 
-/* byte offset of every slot inside the 512 B core block.                 */
+/* Byte offset of every slot inside the 512 B core block.                 */
 #define SLOT_STRIDE 170u
 #define SLOT_COUNT  2u
 
 static uint32_t slot_offset(int i) {
 	return (uint32_t)((i + 1) * SLOT_STRIDE);
+}
+
+/* Choose the highest CRC-valid seq and (or) the other slot's image.        */
+int slot_pick(const uint8_t block[512]) {
+	int best = -1;
+	for (int i = 0; i < (int)SLOT_COUNT; ++i) {
+		save_slot_t slot;
+		if (!slot_decode(block + slot_offset(i), &slot)) {
+			continue;
+		}
+		if (best < 0 || slot.header.seq > (uint32_t)0) {
+			/* Highest valid seq wins; the raw bytes already reflect
+			 * coverage, so the comparand is the seq field itself.   */
+			best = i;
+		}
+	}
+	return best;
 }
 
 /* Checksums + validation on one slot image.                                */
@@ -46,21 +63,44 @@ bool slot_decode(const uint8_t *image, save_slot_t *out) {
 	return true;
 }
 
-/* Choose the highest CRC-valid seq and (or) the other slot's image.        */
-int slot_pick(const uint8_t block[512]) {
-	int best = -1;
-	for (int i = 0; i < (int)SLOT_COUNT; ++i) {
-		save_slot_t slot;
-		if (!slot_decode(block + slot_offset(i), &slot)) {
-			continue;
-		}
-		if (best < 0 || slot.header.seq > (uint32_t)0) {
-			/* Highest valid seq wins; the raw bytes already reflect
-			 * coverage, so the comparand is the seq field itself.   */
-			best = i;
+/* Full slot image for an explicit slot (0..1); false when damaged.        */
+bool slot_decode_index(const uint8_t block[512], int idx,
+                       save_slot_t *out) {
+	if (idx < 0 || idx >= (int)SLOT_COUNT) {
+		return false;
+	}
+	return slot_decode(block + slot_offset(idx), out);
+}
+
+/* Describe one slot for the title cards (additive B07, spec-01 R1/R5):
+ * valid = CRC-verified v1 record; blank = never written (not damage);
+ * otherwise the slot is damaged (damage is never reported as blank).      */
+bool slot_info(const uint8_t block[512], int idx, save_slot_info_t *out) {
+	if (out == NULL) {
+		return false;
+	}
+	memset(out, 0, sizeof *out);
+	if (idx < 0 || idx >= (int)SLOT_COUNT) {
+		return false;
+	}
+	const uint8_t *image = block + slot_offset(idx);
+	bool all_zero = true;
+	for (uint32_t i = 0; i < SLOT_STRIDE; ++i) {
+		if (image[i] != 0u) {
+			all_zero = false;
+			break;
 		}
 	}
-	return best;
+	out->blank = all_zero;
+	save_slot_t slot;
+	if (!slot_decode(image, &slot)) {
+		return false;
+	}
+	out->valid = 1u;
+	out->day = slot.header.day;
+	out->seq = slot.header.seq;
+	out->treasury = slot.payload.treasury;
+	return true;
 }
 
 static uint32_t read_u32(const uint8_t *p) {

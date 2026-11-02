@@ -87,4 +87,14 @@ void sim_step(uint8_t ticks);
 /* sim_init(): seed the module state; called once from boot.               */
 void sim_init(uint32_t seed);
 
+/* ---- additive B07: boot handoff (spec-01 R2, ADR-0001) ----------------- */
+
+/* sim_ingest_save(): apply a verified aggregate as run state and freeze
+ * the tick counter at 0 (the title is a menu; the economy ticks only in
+ * Campaign). New Campaign passes treasury 300, day 1.                     */
+void sim_ingest_save(uint32_t treasury, uint16_t day);
+
+/* sim_tick(): ticks applied since the last ingest (0 on entry).           */
+uint32_t sim_tick(void);
+
 #endif /* WAR_TABLE_SIM_API_H_V1 */

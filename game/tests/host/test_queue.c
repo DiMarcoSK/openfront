@@ -11,6 +11,13 @@
 
 void queue_init(void);
 bool queue_enqueue_cmd(const sim_cmd_t *cmd);
+
+/* B07: the conduit forwards input to the active screen; this suite does
+ * not link ui.c, so the entry point is recorded here.                    */
+void ui_input(uint8_t kind, uint32_t value) {
+	(void)kind;
+	(void)value;
+}
 uint8_t queue_frame_rejects(void);
 const queue_diag_t *queue_diag(void);
 

@@ -12,6 +12,7 @@
 #include "contracts/sim_api.h"
 #include "contracts/input.h"
 #include "contracts/save.h"
+#include "contracts/ui.h"
 
 #define DEBOUNCE_FRAMES (INPUT_TOUCH_DEBOUNCE_MS / 16u) /* 250 ms @ 60 Hz. */
 #define TICK_EVERY_FRAMES 6u                            /* 10 Hz @ 60 Hz.  */
@@ -74,9 +75,13 @@ static void drain_inputs(uint32_t frame) {
 				continue;
 			}
 			debounce_left = (uint16_t)DEBOUNCE_FRAMES;
+			ui_input((uint8_t)UI_EVT_TOUCH, ev->value);
+			continue;
 		}
 		(void)frame;
-		/* Command emission ships with B08/B12: input -> campaign row. */
+		/* The conduit routes every key edge to the active screen
+		 * (spec-01 T009); command emission ships with B08/B12.       */
+		ui_input((uint8_t)UI_EVT_KEY, ev->value);
 	}
 }
 

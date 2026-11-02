@@ -47,11 +47,27 @@ void loop_start(void) {
 		if (ui_screen() != UI_SCREEN_TITLE && (keysDown() & KEY_START)) {
 			running = false;
 		}
-		/* One conduit call per frame; ADR-0001: the title is a menu, so
-		 * the 10 Hz economy step runs in Campaign only.               */
+		/* One conduit call per frame; ADR-0001: menus tick nothing.    */
 		queue_frame(frame_counter);
-		if ((frame_counter % 6u) == 0u && ui_screen() == UI_SCREEN_CAMPAIGN) {
+		if ((frame_counter % 6u) == 0u) {
+			/* 10 Hz boundary: the economy runs on Campaign only,
+			 * muster also runs in Base (spec-03 R1/R4), battle
+			 * runs its own resolve next to the economy ticker. */
+			const ui_screen_t scr = ui_screen();
+			uint8_t modes = 0u;
+			if (scr == UI_SCREEN_CAMPAIGN || scr == UI_SCREEN_BATTLE ||
+			    scr == UI_SCREEN_SETTINGS) {
+				modes |= SIM_RUN_ECONOMY;
+			}
+			if (scr == UI_SCREEN_CAMPAIGN || scr == UI_SCREEN_BASE ||
+			    scr == UI_SCREEN_BATTLE || scr == UI_SCREEN_SETTINGS) {
+				modes |= SIM_RUN_MUSTER;
+			}
+			sim_set_run_mode(modes);
 			sim_step(1u);
+			if (scr == UI_SCREEN_BATTLE) {
+				sim_battle_step();
+			}
 			diag_push(DIAG_KEY_TICK, frame_counter / 6u);
 		}
 		frame_counter++;

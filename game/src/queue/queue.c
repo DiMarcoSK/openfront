@@ -114,22 +114,58 @@ static void dispatch_commands(uint32_t frame) {
 		cmd_tail = (uint8_t)((cmd_tail + 1u) % QUEUE_CMD_CAP);
 		cmd_depth--;
 		diag.cmd_depth = cmd_depth;
-		/* sim owns the application; loop only hands the envelope over. */
-		/* B03 keeps a single-writer: sim_step consumes the ring next.  */
-		(void)cmd;
+		/* One command one debit: sim owns the economy write, the
+		 * re-check at dispatch is against the live snapshot
+		 * (spec-02 R6; a drain between enqueue and dispatch
+		 * rejects with 0 debit - B12 keeps the duplicate guard).  */
+		const sim_result_t r = sim_apply(&cmd);
+		switch (r) {
+		case SIM_OK:
+			break;
+		case SIM_INSUFFICIENT_TREASURY:
+			push_reject(QUEUE_REJECT_INSUFFICIENT);
+			break;
+		case SIM_QUEUE_FULL:
+			push_reject(QUEUE_REJECT_QUEUE_FULL);
+			break;
+		case SIM_CHEST_FULL:
+			push_reject(QUEUE_REJECT_CHEST_FULL);
+			break;
+		default:
+			push_reject(QUEUE_REJECT_BAD_ARG);
+			break;
+		}
 	}
 }
 
-static void coalesce_save(void) {
-	/* Spec-02 T012: the save boundary is Base exit or the 5-min tick,
-	 * never an action or a tick itself. B03 keeps the depth at 1.       */
-	diag.save_depth = save_pending ? 1u : 0u;
+/* Coalesced save boundary (spec-02 R8 / T012, spec-05 R4): the write
+ * lands on the return to Campaign after dirtying work, throttled once
+ * per 600 frames (10 s worst case); the card is only written here.        */
+static uint32_t last_commit_frame;
+static void coalesce_save(uint32_t frame) {
+	if (ui_screen() != UI_SCREEN_CAMPAIGN || !save_is_dirty()) {
+		diag.save_depth = 0u;
+		return;
+	}
+	if (frame - last_commit_frame < 600u) {
+		diag.save_depth = 1u; /* pending, coalesced                 */
+		return;
+	}
+	save_aggregate_t agg;
+	sim_export_aggregate(&agg);
+	save_set_day(sim_snapshot()->day);
+	const save_status_t s = save_commit(&agg);
+	last_commit_frame = frame;
+	diag.save_depth = (s == SAVE_STATUS_OK) ? 0u : 1u;
+	if (s != SAVE_STATUS_OK) {
+		push_reject(QUEUE_REJECT_BAD_ARG); /* inline status owns the copy */
+	}
 }
 
 void queue_frame(uint32_t frame) {
 	drain_inputs(frame);
 	dispatch_commands(frame);
-	coalesce_save();
+	coalesce_save(frame);
 	if ((frame % TICK_EVERY_FRAMES) == 0u && !first_frame) {
 		/* 10 Hz tick boundary; sim_step is called by loop once.        */
 	}

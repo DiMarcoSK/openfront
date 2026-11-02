@@ -24,6 +24,8 @@ typedef enum queue_reject_reason {
 	QUEUE_REJECT_DUP_SEQ,
 	QUEUE_REJECT_DEBOUNCE,
 	QUEUE_REJECT_BAD_ARG,
+	/* additive B08 (B10/B12): command-level re-check failure codes.    */
+	QUEUE_REJECT_CHEST_FULL,
 } queue_reject_reason_t;
 
 typedef struct queue_diag {

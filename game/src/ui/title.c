@@ -170,7 +170,7 @@ bool title_handoff(int slot) {
 	}
 	/* The title is a menu (ADR-0001): the run state enters with the
 	 * tick counter frozen at 0 (spec-01 R2).                             */
-	sim_ingest_save(agg.treasury, info[slot].day);
+	sim_ingest_save(&agg, info[slot].day);
 	entered_slot = slot;
 	state = TITLE_HANDOFF;
 	return true;
@@ -215,7 +215,8 @@ static title_action_t act_on(int target) {
 		}
 		if (state == TITLE_EMPTY || state == TITLE_NO_CARD ||
 		    state == TITLE_BOTH_DAMAGED) {
-			sim_ingest_save(300u, 1u); /* Day 1 / treasury 300 fixures */
+			/* New Campaign: Day 1 / treasury 300 (spec-01 fixures) */
+			sim_init(1u);
 			entered_slot = -1;
 			state = TITLE_HANDOFF;
 			return TITLE_ACT_NEW_ICON;

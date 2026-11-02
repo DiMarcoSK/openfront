@@ -116,6 +116,11 @@ save_status_t save_erase(void);
 /* Human-readable status word, one row, 30 chars per line max (spec-06).   */
 const char *save_status_text(save_status_t status);
 
+/* ---- additive B07: reload day (B08/B10 commit path) --------------------
+ * The slot header carries the day; the payload does not (ADR-0002), so
+ * the committing frame stamps it next to the 170 B image.                 */
+void save_set_day(uint16_t day);
+
 /* Dirty flag for the coalesced commit (spec-02 T012): a debit sets it,
  * no commit runs on tick or row action.                                  */
 void save_set_dirty(void);

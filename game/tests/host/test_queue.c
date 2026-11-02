@@ -8,16 +8,32 @@
 
 #include "contracts/queue.h"
 #include "contracts/sim_api.h"
+#include "contracts/ui.h"
+#include "contracts/save.h"
 
 void queue_init(void);
 bool queue_enqueue_cmd(const sim_cmd_t *cmd);
 
-/* B07: the conduit forwards input to the active screen; this suite does
- * not link ui.c, so the entry point is recorded here.                    */
+/* B07/B08: the conduit reaches the active screen + the save boundary;
+ * this suite does not link ui.c, so both entry points are recorded here. */
 void ui_input(uint8_t kind, uint32_t value) {
 	(void)kind;
 	(void)value;
 }
+
+ui_screen_t ui_screen(void) {
+	return UI_SCREEN_NONE;
+}
+
+/* Save backend stubs: the coalesced boundary links save.c into this unit
+ * (the save core itself is exercised by test_save/test_title).           */
+save_backend_kind_t backend_probe(void) { return SAVE_BACKEND_NONE; }
+void backend_read(uint32_t o, uint8_t *d, uint32_t l) { (void)o; (void)d; (void)l; }
+void backend_write(uint32_t o, const uint8_t *s, uint32_t l) { (void)o; (void)s; (void)l; }
+bool backend_detect_detail(void) { return false; }
+void backend_write_detail(uint32_t o, const uint8_t *s, uint32_t l) { (void)o; (void)s; (void)l; }
+void backend_read_detail(uint32_t o, uint8_t *d, uint32_t l) { (void)o; (void)d; (void)l; }
+
 uint8_t queue_frame_rejects(void);
 const queue_diag_t *queue_diag(void);
 

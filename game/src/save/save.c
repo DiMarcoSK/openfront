@@ -18,6 +18,10 @@ static uint32_t commit_seq;
 static bool dirty;
 static uint16_t pending_day;
 
+void save_set_day(uint16_t day) {
+	pending_day = day;
+}
+
 /* Additive B07: per-slot descriptors cached from the boot scan, so the
  * title cards read the save contract without touching slots.c.            */
 static save_slot_info_t slot_infos[2];
@@ -83,11 +87,14 @@ save_status_t save_commit(const save_aggregate_t *snap) {
 	if (snap == NULL) {
 		return current_status;
 	}
+	/* Empty card (no boot scan pick): start on slot 1 (index 0); the
+	 * protocol writes the PAR of the active slot it receives.          */
 	save_status_t s = SAVE_STATUS_OK;
-	slot_write_protocol(block, active_slot, snap, ++commit_seq,
-	                    (uint16_t)pending_day, &s);
+	const int protocol_active = (active_slot < 0) ? 1 : active_slot;
+	slot_write_protocol(block, protocol_active, snap, ++commit_seq,
+	                    pending_day, &s);
 	if (s == SAVE_STATUS_OK) {
-		active_slot = 1 - active_slot;
+		active_slot = 1 - protocol_active; /* now the active slot */
 	} else {
 		/* spec-06 R7: 2 attempts then FULL; the last valid slot stays
 		 * loadable, no auto erase.

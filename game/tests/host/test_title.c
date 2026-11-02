@@ -53,6 +53,15 @@ bool backend_detect_detail(void) { return false; }
 void backend_write_detail(uint32_t o, const uint8_t *s, uint32_t l) { (void)o; (void)s; (void)l; }
 void backend_read_detail(uint32_t o, uint8_t *d, uint32_t l) { (void)o; (void)d; (void)l; }
 
+ui_screen_t ui_screen(void) {
+	return UI_SCREEN_TITLE; /* coalesce holds on the title: 0 writes */
+}
+
+void ui_input(uint8_t kind, uint32_t value) {
+	(void)kind;
+	(void)value; /* the title path pushes input via title_input */
+}
+
 /* ---- fixtures ----------------------------------------------------------- */
 static void card_blank(void) {
 	memset(rom_block, 0, sizeof rom_block);

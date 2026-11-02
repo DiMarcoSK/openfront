@@ -22,9 +22,10 @@ run() {
   "$BIN_DIR/$(basename "$1" .c)"
 }
 
-# B03: the single conduit (queue/input/sim only; save.c's boot path pulls
-# the backend + slot protocol, so it is linked in the B06 suite instead).
-build tests/host/test_queue.c src/queue/queue.c src/input/input.c src/sim/sim.c
+# B03: the single conduit (save.c + slots are linked for the coalesced
+# boundary now; ui_screen/ui_input are stubs inside the test).
+build tests/host/test_queue.c src/queue/queue.c src/input/input.c \
+      src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_queue.c
 
 # B06: the save core (slots + crc32; save.c is the thin shell consumed by
@@ -33,8 +34,26 @@ build tests/host/test_save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_save.c
 
 # B07: boot -> title -> campaign handoff (spec 01 T008/T014-T018, T021).
-build tests/host/test_title.c src/ui/title.c src/save/save.c \
-      src/save/slots.c src/save/crc32.c src/sim/sim.c
+build tests/host/test_title.c src/ui/title.c src/queue/queue.c \
+      src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
+      src/save/crc32.c
 run tests/host/test_title.c
+
+# B08: campaign list, affordability, ticker, 3-tap recruit handoff.
+build tests/host/test_campaign.c src/ui/campaign.c src/queue/queue.c \
+      src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
+      src/save/crc32.c
+run tests/host/test_campaign.c
+
+# B09: base slice (muster, chest, pending cap, autoform, swap).
+build tests/host/test_base.c src/ui/base.c src/queue/queue.c \
+      src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
+      src/save/crc32.c
+run tests/host/test_base.c
+
+# B10: battle deterministic seal, Continue-once, Retry, reboot restores.
+build tests/host/test_battle.c src/queue/queue.c src/input/input.c \
+      src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
+run tests/host/test_battle.c
 
 echo "host tests passed."

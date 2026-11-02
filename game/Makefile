@@ -27,7 +27,7 @@ NDSTOOL := $(WINBIN_IX)/ndstool
 TARGET := wartable
 BUILD  := build
 DATA   := data
-MODULES := boot loop input sim render save audio ui
+MODULES := boot loop input sim render save audio ui queue
 GFXTOOLS := $(WINBIN_IX)/grit
 
 TYPEFLAGS := \
@@ -68,7 +68,7 @@ OBJS := $(patsubst src/%.c, $(BUILD)/src/%.o, $(SRCS))
 GFX_SRC := $(sort $(wildcard data/*.png))
 GFX_OBJS := $(patsubst $(DATA)/%.png, $(BUILD)/gfx/%.o, $(GFX_SRC))
 
-.PHONY: all clean rom budget run include-graph help setup
+.PHONY: all clean rom budget run include-graph regen test-host help setup
 .DEFAULT_GOAL := rom
 
 # ---------------------------------------------------------------------------
@@ -114,6 +114,9 @@ budget:
 regen:
 	python3 tools/gen_tokens.py
 	python3 tools/check_modules.py
+
+test-host:
+	bash tests/host/run.sh
 
 include-graph:
 	@python3 tools/check_modules.py

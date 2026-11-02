@@ -7,6 +7,7 @@
 #define WAR_TABLE_SIM_API_H_V1
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #define SIM_ABI_VERSION 1u
 

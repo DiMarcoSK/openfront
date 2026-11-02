@@ -1,39 +1,57 @@
 /* loop.c - the frame cycle (module: loop).
  * Owns VBlank, the screen switch order and the per-frame sequence:
- * input -> sim step -> ui draw -> save coalesced commit (ADR-0001).
+ * input -> sim step -> ui draw -> coalesced save (ADR-0001).
+ * loop pushes a monotonic cmd seq and calls queue_frame() once per frame.
  */
 #include <nds.h>
 #include <calico.h>
 
 #include "contracts/loop.h"
-#include "contracts/input.h"
+#include "contracts/queue.h"
 #include "contracts/sim_api.h"
 #include "contracts/ui.h"
 
+void queue_init(void);
+void queue_frame(uint32_t frame);
+void diag_push(diag_key_t key, uint32_t value);
+
 static uint32_t frame_counter;
+
+/* The 10 s diag ring: loop owns it (spec-02 T014).                      */
+#define DIAG_RING_SIZE 128u
+static uint32_t diag_ring[DIAG_RING_SIZE];
+static uint8_t diag_head;
+
+void diag_push(diag_key_t key, uint32_t value) {
+	(void)key; /* key indexing ships with B05/B14; a ring keeps the cost. */
+	diag_ring[diag_head] = value;
+	diag_head = (uint8_t)((diag_head + 1u) % DIAG_RING_SIZE);
+}
+
+uint32_t diag_read(diag_key_t key) {
+	(void)key;
+	return diag_ring[(uint8_t)((diag_head + DIAG_RING_SIZE - 1u) % DIAG_RING_SIZE)];
+}
 
 void loop_init(void) {
 	frame_counter = 0u;
 }
 
-static void loop_frame(void) {
-	(void)frame_counter++;
-	input_event_t events[INPUT_QUEUE_CAP];
-	const uint8_t count = input_frame(events);
-	for (uint8_t i = 0; i < count && i < INPUT_QUEUE_CAP; ++i) {
-		/* Command plumbing ships with B03/B12; B01 just drains the queue. */
-	}
-	sim_step(1u);
-	ui_frame();
-}
-
 void loop_start(void) {
-	while (pmMainLoop()) {
+	bool running = true;
+	while (running && pmMainLoop()) {
 		swiWaitForVBlank();
 		scanKeys();
 		if (keysDown() & KEY_START) {
-			break;
+			running = false;
 		}
-		loop_frame();
+		/* One conduit call per frame; sim_step on the 10 Hz boundary.  */
+		queue_frame(frame_counter);
+		if ((frame_counter % 6u) == 0u) {
+			sim_step(1u);
+			diag_push(DIAG_KEY_TICK, frame_counter / 6u);
+		}
+		frame_counter++;
+		ui_frame();
 	}
 }

@@ -1,7 +1,6 @@
 /* save.h v1 - save module contract (ADR-0002).
  * Owner: save module (src/save). Everyone else consumes this header only;
  * reading the save module's internals is banned by the include-graph check.
- * reading save/ internals is banned by the include-graph check.
  * Additive only: a breaking change ships save_v2.h with an adapter
  * (constitution 6, spec-06 plan section 2/3).
  */
@@ -10,6 +9,8 @@
 
 /* Standard headers are fine; everything else in the module tree is not. */
 #include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
 
 #define SAVE_ABI_VERSION 1u
 
@@ -20,7 +21,7 @@ typedef struct save_header {
 	uint8_t magic[4];      /* "TYCN"                                    */
 	uint8_t format;        /* 1 = v1; unknown formats refuse to load    */
 	uint8_t scenario;      /* reserved                                  */
-	uint8_t slot;          /* 0..1 (172 B reserved fora 3rd slot, v2)   */
+	uint8_t slot;          /* 0..1 (172 B reserved for a 3rd slot, v2)  */
 	uint8_t flags;         /* bit0 = dirty                              */
 	uint32_t seq;          /* monotonic per boot; part of idempotency   */
 	uint16_t day;          /* resumed day number                        */
@@ -89,5 +90,10 @@ save_status_t save_erase(void);
 
 /* Human-readable status word, one row, 30 chars per line max (spec-06).   */
 const char *save_status_text(save_status_t status);
+
+/* Dirty flag for the coalesced commit (spec-02 T012): a debit sets it,
+ * no commit runs on tick or row action.                                  */
+void save_set_dirty(void);
+bool save_is_dirty(void);
 
 #endif /* WAR_TABLE_SAVE_H_V1 */

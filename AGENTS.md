@@ -7,12 +7,12 @@ B01, B02, B03, B04, B06, **B07, B08, B09 and B10** of the backlog are
 runs the full loop (title -> campaign -> base -> battle -> result -> reboot).
 Only the remaining items on the critical path are actual work:
 
-- Next up, in order: **B05 (harness remainder: cycle, golden frame,
-  validate.sh contrast, save profiles)**, then **B11 (title failure
-  paths)**, **B12 (campaign command path)** and **B13/B14/B19**.
-- **B05 is partial** (include-graph + byte-budget gates exist; the cycle
-  harness, golden frame hash, validate.sh contrast and emulator save
-  profiles still lack a harness).
+- Next up, in order: **B11 (title failure paths)**, **B12 (campaign
+  command path)** and **B13/B14/B19**.
+- **B05 is mostly done** (include-graph + real byte budget + cycle
+  harness + 8/8 contrast + golden frame hash + save profiles all wired;
+  only the 2-emulator capture runner (B31) and the ADR-0007 device POC
+  (B19) remain).
 
 The status of every item — with acceptance evidence — is inside
 `cases/nintendo-ds-strategy-tycoon-incremental/BACKLOG.md` (B01..B06 carry a

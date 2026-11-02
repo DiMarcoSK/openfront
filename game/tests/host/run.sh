@@ -56,4 +56,8 @@ build tests/host/test_battle.c src/queue/queue.c src/input/input.c \
       src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_battle.c
 
+# B05 cycle harness probe (ops counters -> tools/check_cycles.py gate).
+build tests/host/cycle_probe.c src/queue/queue.c src/input/input.c \
+      src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
+
 echo "host tests passed."

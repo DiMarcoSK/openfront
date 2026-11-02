@@ -120,6 +120,19 @@ regen:
 test-host:
 	bash tests/host/run.sh
 
+# B05 remainder targets -----------------------------------------------------
+# validate: 8/8 WCAG pairs from tokens.json (visual-contract table).
+validate:
+	python3 tools/contrast.py
+
+# cycles: builds+runs the ops probe then gates cycles/unit and per-frame.
+cycles:
+	python3 tools/check_cycles.py
+
+# profiles: emulator save profiles sanity (ROM + 512 B EEPROM .sav).
+profiles:
+	bash tools/emu_profiles.sh check
+
 include-graph:
 	@python3 tools/check_modules.py
 
@@ -139,7 +152,7 @@ memory-check:
 rtk-%:
 	bash tools/rtk.sh $(*) $(RTK_ARGS)
 
-.PHONY: all clean rom budget run include-graph regen test-host memory memory-check rtk help setup
+.PHONY: all clean rom budget run include-graph regen test-host validate cycles profiles memory memory-check rtk help setup
 .DEFAULT_GOAL := rom
 
 setup:
@@ -156,6 +169,9 @@ help:
 	@echo "  budget         print ROM/RAM/VRAM and enforce the ceilings"
 	@echo "  run            boot wartable.nds in melonDS (RUN=melonds)"
 	@echo "  test-host      gcc unit tests for the B03 + B06 modules"
+	@echo "  validate       8/8 WCAG contrast pairs from tokens.json (B05)"
+	@echo "  cycles         cycle harness: ops counters -> cycles/unit gate (B05)"
+	@echo "  profiles       emulator save profiles: DLDI + EEPROM 512 B (B05)"
 	@echo "  include-graph  module isolation + palette gates"
 	@echo "  regen          rewrite tokens.h and re-run the gates"
 	@echo "  memory         mine cases/ + game/ into MemPalace"

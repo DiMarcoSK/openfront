@@ -23,6 +23,51 @@ static ui_screen_t current = UI_SCREEN_NONE;
 static bool catalog_open;
 static bool title_inited;
 
+/* Golden frame hash (B05): FNV-1a over the state that a frame renders.
+ * Both emulators print the same line to stdout; B31's pixel captures
+ * extend this to art. Equal across DeSmuME and MelonDS by construction.  */
+static uint32_t frame_hash;
+
+static uint32_t hash_bytes(uint32_t h, const uint8_t *p, uint32_t n) {
+	for (uint32_t i = 0; i < n; ++i) {
+		h ^= p[i];
+		h *= 0x01000193u;
+	}
+	return h;
+}
+
+static void bench_frame_hash(void) {
+	uint8_t buf[32];
+	const sim_snapshot_t *snap = sim_snapshot();
+	frame_hash = 0x811C9DC5u;
+	buf[0] = (uint8_t)current;
+	buf[1] = (uint8_t)save_status();
+	frame_hash = hash_bytes(frame_hash, buf, 2);
+	if (snap) {
+		frame_hash = hash_bytes(frame_hash,
+		                        (const uint8_t *)snap,
+		                        sizeof *snap);
+	}
+	frame_hash = hash_bytes(frame_hash, sim_formation(),
+	                        SIM_FORMATION_SLOTS);
+	buf[0] = (uint8_t)sim_battle_active();
+	buf[1] = sim_battle_turn();
+	buf[2] = sim_battle_enemies();
+	buf[3] = sim_battle_units();
+	buf[4] = sim_battle_province();
+	frame_hash = hash_bytes(frame_hash, buf, 5);
+	frame_hash = hash_bytes(frame_hash, sim_front_taken(0u) ?
+	                        (const uint8_t *)"\x01" : (const uint8_t *)"\x00", 1u);
+	/* every ~0.5 s: one line, both emulators' console fold onto it     */
+	static uint32_t ticks_since_print;
+	if ((current == UI_SCREEN_BATTLE) &&
+	    (++ticks_since_print >= 30u)) {
+		ticks_since_print = 0u;
+		iprintf("t=bench frame hash %08lx\n",
+		        (unsigned long)frame_hash);
+	}
+}
+
 void ui_set_screen(ui_screen_t screen) {
 	current = screen;
 	if (current == UI_SCREEN_TITLE && !title_inited) {
@@ -83,6 +128,7 @@ void ui_frame(void) {
 	if (current == UI_SCREEN_NONE) {
 		return;
 	}
+	bench_frame_hash();
 
 	switch (current) {
 	case UI_SCREEN_TITLE:

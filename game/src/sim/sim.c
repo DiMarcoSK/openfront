@@ -35,7 +35,6 @@ static uint32_t tick_count;
 static uint16_t econ_ticks;            /* ticks inside the running day     */
 static uint8_t run_modes;
 
-static uint8_t roster;                 /* owned companies                  */
 static uint16_t chest;                 /* chest_used 0..300                */
 static uint8_t formation[SIM_FORMATION_SLOTS];
 static uint8_t muster_pending;         /* queued companies, cap 20         */
@@ -66,7 +65,8 @@ static uint32_t rng_next(void) {
 	return rng_state;
 }
 
-static uint8_t taken_mask;
+static uint8_t taken_mask;             /* front bits in the save payload   */
+static uint16_t roster;                /* owned companies (chest cap 300)  */
 
 static uint8_t taken_count(void) {
 	uint8_t n = 0u;
@@ -120,13 +120,21 @@ void sim_ingest_save(const save_aggregate_t *agg, uint16_t day) {
 	snap.day = day ? day : 1u;
 	rng_state = (agg->rng_state != 0u) ? agg->rng_state : 1u;
 	boot_seed = (agg->seed != 0u) ? agg->seed : 1u;
-	roster = (uint8_t)agg->unit_count;
+	roster = agg->unit_count;
 	taken_mask = agg->province_state[0];
 	chest = (uint16_t)agg->reserved[0] | ((uint16_t)agg->reserved[1] << 8);
 	muster_pending = agg->pending_reward;
 	muster_active_batch = (muster_pending > 0u);
 	muster_batch = muster_pending;
 	sim_autoform();
+}
+
+/* ---- cycle harness counters (B05, spec-02 T003, spec-04 T007) ---------- */
+static uint32_t ops_counter;
+static uint32_t ops_last_step; /* ops executed in the last sim_step       */
+
+uint32_t sim_ops_last_step(void) {
+	return ops_last_step;
 }
 
 uint32_t sim_tick(void) {
@@ -198,7 +206,7 @@ void sim_clear_changed_province(void) {
 
 /* ---- base slice (spec-03 R2-R8, B09) ----------------------------------- */
 
-uint8_t sim_roster(void) {
+uint16_t sim_roster(void) {
 	return roster;
 }
 
@@ -340,7 +348,8 @@ sim_result_t sim_apply(const sim_cmd_t *cmd) {
 		 * the threat field stays read-only for battles at B10).        */
 		battle_enemies =
 		    (uint8_t)(6u + 3u * provinces[province].threat);
-		battle_roster_start = roster;
+		battle_roster_start =
+		    (uint8_t)(roster > 255u ? 255u : roster);
 		sealed_applied = false;
 		++battle_id_seq;
 		return SIM_OK;
@@ -357,16 +366,21 @@ sim_result_t sim_apply(const sim_cmd_t *cmd) {
 /* ---- economy step: run mode gates the two 10 Hz consumers (ADR-0001) --- */
 
 static void muster_step(uint32_t ticks) {
+	ops_last_step = 0u;
 	if (muster_pending == 0u) {
 		muster_ticks = 0u;
 		return;
 	}
 	muster_ticks = (uint16_t)(muster_ticks + ticks);
+	/* One company per 20 ticks: the while body is the unit work the
+	 * harness counts (<= ticks/20 units, bounded by the 20-pending cap). */
 	while (muster_ticks >= SIM_MUSTER_TICKS && muster_pending > 0u) {
 		muster_ticks -= SIM_MUSTER_TICKS;
 		roster++;
 		muster_pending--;
+		ops_counter += 2u; /* roster update + pending update */
 	}
+	ops_last_step = ops_counter;
 }
 
 void sim_step(uint8_t ticks) {
@@ -376,12 +390,15 @@ void sim_step(uint8_t ticks) {
 		 * ticks after 5 s in Base / on Result (spec-02 T022, R1).     */
 		tick_count += (uint32_t)ticks;
 		econ_ticks = (uint16_t)(econ_ticks + ticks);
+		ops_counter += 1u; /* the day/ticker block per economy frame */
 		while (econ_ticks >= SIM_ECON_TICKS_PER_DAY) {
 			econ_ticks =
 			    (uint16_t)(econ_ticks - SIM_ECON_TICKS_PER_DAY);
 			snap.day++;
 			snap.treasury += SIM_DAY_INCOME;
+			ops_counter += 2u; /* day + treasury updates */
 		}
+		ops_last_step = ops_counter;
 	}
 
 	if ((run_modes & SIM_RUN_MUSTER) != 0u) {
@@ -418,7 +435,8 @@ uint8_t sim_battle_province(void) {
 uint8_t sim_battle_units(void) {
 	/* Chips on the field: roster capped to the 64 OAM budget (R3);
 	 * the host suite asserts the cap (OAM <= 128).                        */
-	return (roster > SIM_BATTLE_UNITS) ? SIM_BATTLE_UNITS : roster;
+	return (roster > SIM_BATTLE_UNITS) ? SIM_BATTLE_UNITS
+	                            : (uint8_t)roster;
 }
 
 uint8_t sim_battle_units_start(void) {
@@ -437,9 +455,12 @@ void sim_battle_step(void) {
 	battle_enemies =
 	    (uint8_t)((battle_enemies > dmg) ? (battle_enemies - dmg)
 	                                     : (uint8_t)0u);
+	ops_counter += 3u; /* rolled damage, enemy update, chips update */
 	if (((roll >> 16u) & 3u) == 0u && roster > 0u) {
-		roster--; /* attrition, deterministic per seed                       */
+		roster--; /* attrition, deterministic per seed, 1 unit op */
+		ops_counter++;
 	}
+	ops_last_step = ops_counter; /* per-frame harness metric */
 	if (battle_enemies == 0u) {
 		/* R11: deterministic seal in 1 frame; no save write here.     */
 		battle_active = false;
@@ -465,7 +486,7 @@ void sim_battle_step(void) {
 	                          : 0;
 	sealed.day_delta = battle_turn;
 	sealed.units_before = battle_roster_start;
-	sealed.units_after = roster;
+	sealed.units_after = (uint8_t)(roster > 255u ? 255u : roster);
 	sealed.tier_before = taken_count();
 	sealed.tier_after =
 	    (uint8_t)(taken_count() + (sealed.result == 1u ? 1u : 0u));
@@ -492,7 +513,7 @@ sim_result_t sim_result_apply(void) {
 	snap.treasury =
 	    (uint32_t)((int32_t)snap.treasury + sealed.treasury_delta);
 	snap.day = (uint16_t)(snap.day + sealed.day_delta);
-	roster = sealed.units_after;
+	roster = sealed.units_after; /* apply replaces it; u8 cap */
 	if (sealed.result == 1u) {
 		taken_mask |= (uint8_t)(1u << sealed.province_id);
 	}
@@ -514,7 +535,8 @@ sim_result_t sim_result_retry(void) {
 	battle_turn = 0u;
 	battle_enemies =
 	    (uint8_t)(6u + 3u * provinces[battle_province].threat);
-	battle_roster_start = roster;
+	battle_roster_start =
+	    (uint8_t)(roster > 255u ? 255u : roster);
 	rng_state = battle_seed; /* attempt 2 == attempt 1 frame-for-frame */
 	return SIM_OK;
 }

@@ -99,6 +99,7 @@ void sim_ingest_save(const save_aggregate_t *agg, uint16_t day);
 
 /* sim_tick(): ticks applied since the last ingest (0 on entry).           */
 uint32_t sim_tick(void);
+uint32_t sim_ops_last_step(void); /* B05 cycle harness: unit ops/frame    */
 
 /* ---- additive B08/B09/B10: the loop economy (spec-02/03/04) ------------
  * Balance constants are data, not magic numbers (spec-02 OQ2, spec-03 OQ1).
@@ -167,7 +168,7 @@ void sim_clear_changed_province(void);
 
 #define SIM_FORMATION_SLOTS 10u
 
-uint8_t  sim_roster(void);            /* owned companies                 */
+uint16_t sim_roster(void);            /* owned companies (chest cap 300)  */
 uint16_t sim_chest(void);             /* chest_used 0..300 (12 B records) */
 uint8_t  sim_muster_done(void);       /* mustered of the batch           */
 uint8_t  sim_muster_total(void);      /* batch size                      */

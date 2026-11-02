@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 MODULES = [
-    "boot", "loop", "input", "sim", "render", "save", "audio", "ui",
+    "boot", "loop", "input", "sim", "render", "save", "audio", "ui", "queue",
 ]
 
 HOSTINCLUDES_OK = {
@@ -53,11 +53,12 @@ def main() -> int:
             for fname, ln, header in gather_includes(cfile):
                 if header in HOSTINCLUDES_OK:
                     continue
-                if header.startswith("http") or header.startswith("contracts/"):
+                if header.startswith("http"):
                     continue
+                # public contract headers of any module are the right way in
+                if header.startswith("contracts/") and header.endswith(".h"):
                     continue
                 if header.endswith(".h") and "/" in header:
-                    # src/x private header from a sibling module.
                     owner = header.split("/")[0]
                     if owner != module:
                         failures.append(
@@ -66,7 +67,8 @@ def main() -> int:
                         )
                         continue
                 if header.endswith(".h") and "/" not in header:
-                    # Plain header without the module prefix: contract file.
+                    if (src_root / module / header).exists():
+                        continue  # private intra-module header
                     base = header.replace(".h", "")
                     if base not in MODULES:
                         failures.append(
@@ -83,7 +85,7 @@ def main() -> int:
             text = cfile.read_text()
             for ln, line in enumerate(text.splitlines(), 1):
                 if "0x" in line or "0X" in line:
-                    continue  # C-level hex ints (API bytes) are fine.
+                    continue
                 m = HEX_LITERAL.search(line)
                 if m:
                     failures.append(

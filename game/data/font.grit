@@ -1,0 +1,4 @@
+# (Bitmap font) .Convert to 4bpp tile C source.
+-gB4 -gt -gS
+-ftc
+-fh

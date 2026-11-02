@@ -1,0 +1,21 @@
+# build products, maps, generated c/bin assets and the .nds binary.
+*.o
+*.elf
+*.nds
+*.map
+*.lst
+build/
+*.tmp
+atlas.h
+atlas.img.bin
+atlas.pal.bin
+*.grit2
+.venv/
+
+# bots don't need to see build intermediate c/h files, only inputs matter.
+build/gfx/*.c
+build/gfx/*.h
+
+# local meta
+.DS_Store
+Thumbs.db

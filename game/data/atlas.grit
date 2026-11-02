@@ -1,0 +1,6 @@
+# 4bpp tile form: convert to C source, output as /build/gfx/atlas.c
+-gB4 -gt -gS
+
+# Generate a C-array source file, not a raw .bin
+-ftc
+-fh

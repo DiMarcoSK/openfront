@@ -24,3 +24,6 @@ Thumbs.db
 # debate/run case artifacts are idempotent and re-derivable from the palace
 cases/raw
 cases/*/raw
+
+# python bytecode
+__pycache__/

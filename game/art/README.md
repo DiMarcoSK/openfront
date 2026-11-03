@@ -1,5 +1,8 @@
 # War Table — B07/B08 art handoff
 
+> The full art set (bosses, units, UI kit, screens, DS pipeline and gallery
+> ROM) is documented in [ART_DIRECTION.md](ART_DIRECTION.md).
+
 Original pixel-art references for the title/save handoff (B07) and campaign
 ledger (B08). Rebuild deterministically from the repository root:
 

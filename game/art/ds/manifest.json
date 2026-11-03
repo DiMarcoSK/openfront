@@ -1,0 +1,751 @@
+{
+ "battle_bottom_desert": {
+  "bpp": 8,
+  "colours": 47,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 554,
+  "vram_bytes": 36992,
+  "w": 256
+ },
+ "battle_bottom_highlands": {
+  "bpp": 8,
+  "colours": 48,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 554,
+  "vram_bytes": 36992,
+  "w": 256
+ },
+ "battle_bottom_plains": {
+  "bpp": 8,
+  "colours": 47,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 554,
+  "vram_bytes": 36992,
+  "w": 256
+ },
+ "battle_mock": {
+  "bpp": 8,
+  "colours": 44,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 500,
+  "vram_bytes": 33536,
+  "w": 256
+ },
+ "boss_ares": {
+  "bpp": 8,
+  "colours": 41,
+  "cycles": {
+   "fire": [
+    0,
+    5
+   ]
+  },
+  "h": 192,
+  "kind": "bg",
+  "tiles": 554,
+  "vram_bytes": 36992,
+  "w": 256
+ },
+ "boss_hades": {
+  "bpp": 8,
+  "colours": 31,
+  "cycles": {
+   "embers": [
+    5,
+    3
+   ],
+   "soulfire": [
+    0,
+    5
+   ]
+  },
+  "h": 192,
+  "kind": "bg",
+  "tiles": 585,
+  "vram_bytes": 38976,
+  "w": 256
+ },
+ "boss_kronos": {
+  "bpp": 8,
+  "colours": 31,
+  "cycles": {
+   "eyes": [
+    4,
+    4
+   ],
+   "sand": [
+    0,
+    4
+   ],
+   "ticks": [
+    8,
+    4
+   ]
+  },
+  "h": 192,
+  "kind": "bg",
+  "tiles": 688,
+  "vram_bytes": 45568,
+  "w": 256
+ },
+ "boss_poseidon": {
+  "bpp": 8,
+  "colours": 41,
+  "cycles": {
+   "eyes": [
+    0,
+    3
+   ],
+   "surf": [
+    3,
+    3
+   ]
+  },
+  "h": 192,
+  "kind": "bg",
+  "tiles": 612,
+  "vram_bytes": 40704,
+  "w": 256
+ },
+ "boss_zeus": {
+  "bpp": 8,
+  "colours": 33,
+  "cycles": {
+   "eyes": [
+    0,
+    4
+   ],
+   "flash": [
+    4,
+    11
+   ]
+  },
+  "h": 192,
+  "kind": "bg",
+  "tiles": 585,
+  "vram_bytes": 38976,
+  "w": 256
+ },
+ "card_ares": {
+  "bpp": 8,
+  "colours": 40,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 298,
+  "vram_bytes": 20608,
+  "w": 256
+ },
+ "card_hades": {
+  "bpp": 8,
+  "colours": 42,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 306,
+  "vram_bytes": 21120,
+  "w": 256
+ },
+ "card_kronos": {
+  "bpp": 8,
+  "colours": 34,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 278,
+  "vram_bytes": 19328,
+  "w": 256
+ },
+ "card_poseidon": {
+  "bpp": 8,
+  "colours": 40,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 295,
+  "vram_bytes": 20416,
+  "w": 256
+ },
+ "card_zeus": {
+  "bpp": 8,
+  "colours": 41,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 289,
+  "vram_bytes": 20032,
+  "w": 256
+ },
+ "font": {
+  "bytes": 3072,
+  "fh": 8,
+  "frame": 8,
+  "frames": 96,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "fx_ares": {
+  "bytes": 12288,
+  "fh": 64,
+  "frame": 64,
+  "frames": 6,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "fx_hades": {
+  "bytes": 12288,
+  "fh": 64,
+  "frame": 64,
+  "frames": 6,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "fx_kronos": {
+  "bytes": 12288,
+  "fh": 64,
+  "frame": 64,
+  "frames": 6,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "fx_poseidon": {
+  "bytes": 12288,
+  "fh": 64,
+  "frame": 64,
+  "frames": 6,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "fx_zeus": {
+  "bytes": 12288,
+  "fh": 64,
+  "frame": 64,
+  "frames": 6,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "god_ares": {
+  "bytes": 245760,
+  "fh": 64,
+  "frame": 64,
+  "frames": 30,
+  "kind": "obj",
+  "per_frame": 4
+ },
+ "god_hades": {
+  "bytes": 245760,
+  "fh": 64,
+  "frame": 64,
+  "frames": 30,
+  "kind": "obj",
+  "per_frame": 4
+ },
+ "god_kronos": {
+  "bytes": 245760,
+  "fh": 64,
+  "frame": 64,
+  "frames": 30,
+  "kind": "obj",
+  "per_frame": 4
+ },
+ "god_poseidon": {
+  "bytes": 245760,
+  "fh": 64,
+  "frame": 64,
+  "frames": 30,
+  "kind": "obj",
+  "per_frame": 4
+ },
+ "god_zeus": {
+  "bytes": 245760,
+  "fh": 64,
+  "frame": 64,
+  "frames": 30,
+  "kind": "obj",
+  "per_frame": 4
+ },
+ "icons": {
+  "bytes": 1920,
+  "fh": 16,
+  "frame": 16,
+  "frames": 15,
+  "kind": "obj",
+  "order": [
+   "gold",
+   "food",
+   "materials",
+   "knowledge",
+   "manpower",
+   "morale",
+   "attack",
+   "defense",
+   "speed1",
+   "speed2",
+   "speed4",
+   "pause",
+   "casualties",
+   "tier",
+   "battle"
+  ],
+  "per_frame": 1
+ },
+ "map_arena": {
+  "bpp": 8,
+  "colours": 22,
+  "cycles": {
+   "water": [
+    0,
+    5
+   ]
+  },
+  "h": 512,
+  "kind": "bg",
+  "tiles": 424,
+  "vram_bytes": 35328,
+  "w": 512
+ },
+ "map_desert": {
+  "bpp": 8,
+  "colours": 30,
+  "cycles": {
+   "water": [
+    0,
+    5
+   ]
+  },
+  "h": 512,
+  "kind": "bg",
+  "tiles": 728,
+  "vram_bytes": 54784,
+  "w": 512
+ },
+ "map_highlands": {
+  "bpp": 8,
+  "colours": 32,
+  "cycles": {
+   "water": [
+    0,
+    5
+   ]
+  },
+  "h": 512,
+  "kind": "bg",
+  "tiles": 691,
+  "vram_bytes": 52416,
+  "w": 512
+ },
+ "map_plains": {
+  "bpp": 8,
+  "colours": 31,
+  "cycles": {
+   "water": [
+    0,
+    5
+   ]
+  },
+  "h": 512,
+  "kind": "bg",
+  "tiles": 880,
+  "vram_bytes": 64512,
+  "w": 512
+ },
+ "pins": {
+  "bytes": 512,
+  "fh": 16,
+  "frame": 16,
+  "frames": 4,
+  "kind": "obj",
+  "order": [
+   "threat_low",
+   "threat_medium",
+   "threat_high",
+   "threat_critical"
+  ],
+  "per_frame": 1
+ },
+ "recruit_bottom": {
+  "bpp": 8,
+  "colours": 27,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 227,
+  "vram_bytes": 16064,
+  "w": 256
+ },
+ "relics": {
+  "bytes": 640,
+  "fh": 16,
+  "frame": 16,
+  "frames": 5,
+  "kind": "obj",
+  "order": [
+   "keraunos",
+   "trident",
+   "helm_of_darkness",
+   "spear_of_ares",
+   "harpe"
+  ],
+  "per_frame": 1
+ },
+ "relics32": {
+  "bytes": 2560,
+  "fh": 32,
+  "frame": 32,
+  "frames": 5,
+  "kind": "obj",
+  "order": [
+   "keraunos",
+   "trident",
+   "helm_of_darkness",
+   "spear_of_ares",
+   "harpe"
+  ],
+  "per_frame": 1
+ },
+ "result_bottom": {
+  "bpp": 8,
+  "colours": 14,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 297,
+  "vram_bytes": 20544,
+  "w": 256
+ },
+ "squad_assyria_archer": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_assyria_blade": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_assyria_cavalry": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_assyria_general": {
+  "bytes": 1024,
+  "fh": 16,
+  "frame": 16,
+  "frames": 8,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_assyria_spear": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_carthage_archer": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_carthage_blade": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_carthage_cavalry": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_carthage_general": {
+  "bytes": 1024,
+  "fh": 16,
+  "frame": 16,
+  "frames": 8,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_carthage_spear": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_hellenes_archer": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_hellenes_blade": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_hellenes_cavalry": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_hellenes_general": {
+  "bytes": 1024,
+  "fh": 16,
+  "frame": 16,
+  "frames": 8,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_hellenes_spear": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_rome_archer": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_rome_blade": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_rome_cavalry": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_rome_general": {
+  "bytes": 1024,
+  "fh": 16,
+  "frame": 16,
+  "frames": 8,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "squad_rome_spear": {
+  "bytes": 9216,
+  "fh": 16,
+  "frame": 32,
+  "frames": 36,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "title_bottom": {
+  "bpp": 8,
+  "colours": 36,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 269,
+  "vram_bytes": 18752,
+  "w": 256
+ },
+ "title_top": {
+  "bpp": 8,
+  "colours": 30,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 354,
+  "vram_bytes": 24192,
+  "w": 256
+ },
+ "unit_assyria_archer": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_assyria_blade": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_assyria_cavalry": {
+  "bytes": 6656,
+  "fh": 32,
+  "frame": 32,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_assyria_general": {
+  "bytes": 7680,
+  "fh": 32,
+  "frame": 32,
+  "frames": 15,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_assyria_spear": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_carthage_archer": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_carthage_blade": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_carthage_cavalry": {
+  "bytes": 6656,
+  "fh": 32,
+  "frame": 32,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_carthage_general": {
+  "bytes": 7680,
+  "fh": 32,
+  "frame": 32,
+  "frames": 15,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_carthage_spear": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_hellenes_archer": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_hellenes_blade": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_hellenes_cavalry": {
+  "bytes": 6656,
+  "fh": 32,
+  "frame": 32,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_hellenes_general": {
+  "bytes": 7680,
+  "fh": 32,
+  "frame": 32,
+  "frames": 15,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_hellenes_spear": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_rome_archer": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_rome_blade": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_rome_cavalry": {
+  "bytes": 6656,
+  "fh": 32,
+  "frame": 32,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_rome_general": {
+  "bytes": 7680,
+  "fh": 32,
+  "frame": 32,
+  "frames": 15,
+  "kind": "obj",
+  "per_frame": 1
+ },
+ "unit_rome_spear": {
+  "bytes": 1664,
+  "fh": 16,
+  "frame": 16,
+  "frames": 13,
+  "kind": "obj",
+  "per_frame": 1
+ }
+}

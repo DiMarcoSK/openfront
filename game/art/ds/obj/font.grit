@@ -1,0 +1,3 @@
+# 8x8 4bpp font tiles, ASCII 32..126
+-gB4 -gt -p -pn16
+-ftc -fh

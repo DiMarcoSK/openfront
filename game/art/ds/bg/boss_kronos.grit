@@ -1,0 +1,3 @@
+# 8bpp tiled BG, flip-reduced map in screenblocks, own palette
+-gB8 -gt -m -mRtf -mLs -p
+-ftc -fh

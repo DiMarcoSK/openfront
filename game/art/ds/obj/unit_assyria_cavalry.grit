@@ -1,0 +1,3 @@
+# 4bpp OAM sheet, 32x32 blocks in metatile order
+-gB4 -gt -Mw4 -Mh4 -p -pn16
+-ftc -fh

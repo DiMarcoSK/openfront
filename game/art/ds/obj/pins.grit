@@ -1,0 +1,3 @@
+# 4bpp OAM sheet, 16x16 blocks in metatile order
+-gB4 -gt -Mw2 -Mh2 -p -pn16
+-ftc -fh

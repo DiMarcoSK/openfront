@@ -12,6 +12,7 @@
 
 #include "contracts/save.h"
 #include "contracts/sim_api.h"
+#include "contracts/trace.h"
 #include "contracts/ui.h"
 
 #include "ui_draw.h"
@@ -173,6 +174,8 @@ bool title_handoff(int slot) {
 	sim_ingest_save(&agg, info[slot].day);
 	entered_slot = slot;
 	state = TITLE_HANDOFF;
+	/* B14: the title handoff hop, trace id = the slot's commit seq.      */
+	trace_hop(TRACE_FLOW_TITLE, 1u, info[slot].seq);
 	return true;
 }
 
@@ -312,7 +315,10 @@ static void draw_cards(char buf[80]) {
 			snprintf(buf, 80, " %sSLOT %u  EMPTY", focus == i ? ">" : " ",
 			         (unsigned)(i + 1u));
 		} else {
-			snprintf(buf, 80, " %sSLOT %u  DAMAGED + UNREADABLE",
+			/* T020: crit stamp ("!!" mark, non-colour) + text label.
+			 * The tokenized 2 px stamp swaps in at B27; mark + label
+			 * is the colour-independent signal for the damaged card. */
+			snprintf(buf, 80, "%s!! SLOT %u  DAMAGED + UNREADABLE",
 			         focus == i ? ">" : " ", (unsigned)(i + 1u));
 		}
 		ui_draw_text(0, 8 + i, buf);
@@ -332,6 +338,15 @@ void title_frame(void) {
 		scan_pending = false;
 		save_init(); /* caps the scan at 2 x 250 ms (spec-01 R8) */
 		resolve_state();
+		/* B14 (spec-01 T011): one line per scan over both slots, the
+		 * trace id = slot commit seq; 0 telemetry egress - this mirrors
+		 * what the L+R+START overlay shows on device.                  */
+		trace_hop(TRACE_FLOW_BOOT_SCAN, 1u, cards[0].seq);
+		trace_hop(TRACE_FLOW_BOOT_SCAN, 2u, cards[1].seq);
+		iprintf("t=title ev=scan slot=1 seq=%lu v=%u "
+		        "slot=2 seq=%lu v=%u\n",
+		        (unsigned long)cards[0].seq, (unsigned)cards[0].valid,
+		        (unsigned long)cards[1].seq, (unsigned)cards[1].valid);
 		return;
 	}
 

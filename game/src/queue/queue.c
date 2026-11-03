@@ -12,6 +12,7 @@
 #include "contracts/sim_api.h"
 #include "contracts/input.h"
 #include "contracts/save.h"
+#include "contracts/trace.h"
 #include "contracts/ui.h"
 
 #define DEBOUNCE_FRAMES (INPUT_TOUCH_DEBOUNCE_MS / 16u) /* 250 ms @ 60 Hz. */
@@ -121,6 +122,16 @@ static void dispatch_commands(uint32_t frame) {
 		const sim_result_t r = sim_apply(&cmd);
 		switch (r) {
 		case SIM_OK:
+		case SIM_DUPLICATE:
+			/* a replayed seq short-circuits with 0 effect and no
+			 * reject-log entry (B12 T031: only a true rejection -
+			 * queue-full, drained frontier - is logged).           */
+			/* B14: the ui -> sim hop, keyed boot:frame:seq.        */
+			trace_hop(TRACE_FLOW_CMD, 1u, cmd.seq);
+			if (cmd.cmd == 5u) {
+				/* the result hop: the one Continue apply      */
+				trace_hop(TRACE_FLOW_RESULT, 1u, cmd.seq);
+			}
 			break;
 		case SIM_INSUFFICIENT_TREASURY:
 			push_reject(QUEUE_REJECT_INSUFFICIENT);
@@ -152,12 +163,22 @@ static void coalesce_save(uint32_t frame) {
 		return;
 	}
 	save_aggregate_t agg;
+	/* B13 (spec-02 T033): the focused campaign row travels through the
+	 * snapshot; sim_set_selected clamps an out-of-range report to row 0
+	 * (never a VERIFY_FAIL), and the export persists it at byte 62.      */
+	const uint8_t selected = ui_selected_row();
+	sim_set_selected(selected);
 	sim_export_aggregate(&agg);
 	save_set_day(sim_snapshot()->day);
 	const save_status_t s = save_commit(&agg);
 	last_commit_frame = frame;
 	diag.save_depth = (s == SAVE_STATUS_OK) ? 0u : 1u;
-	if (s != SAVE_STATUS_OK) {
+	if (s == SAVE_STATUS_OK) {
+		/* B14: the save hop, trace id = the commit seq that the
+		 * slot header, the status row and this line share
+		 * (spec-06 plan: "one number joins all three hops").       */
+		trace_hop(TRACE_FLOW_SAVE, 1u, save_commit_seq());
+	} else {
 		push_reject(QUEUE_REJECT_BAD_ARG); /* inline status owns the copy */
 	}
 }

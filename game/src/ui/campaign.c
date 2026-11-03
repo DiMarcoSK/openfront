@@ -20,9 +20,15 @@
 /* focus 0..7 across the 8-row list; L/R still pages by 4 (R1: 8 rows
  * reachable in 2 pages).                                                 */
 static int focus;
-static ui_screen_t request;
-static char status_line[40];
+static ui_screen_t request = UI_SCREEN_NONE;
+static char status_line[88];
 static int status_frames;
+
+/* T030: the success footer holds 160 ms (10 frames @ 60 Hz) before the
+ * Base handoff lands; A is locked out over the hold so a mashed press
+ * can never enqueue a second recruit (B12 T032, 20 presses = 1 command). */
+static int handoff_hold;
+static bool confirm_locked;
 
 static uint32_t cmd_seq;   /* monotonic per boot; idempotency key (B12) */
 
@@ -37,6 +43,10 @@ static const char *threat_label(uint8_t t) {
 
 void campaign_focus_province(uint8_t province) {
 	focus = (province < SIM_FRONT_COUNT) ? (int)province : 0;
+	/* every entry into Campaign clears a stale pending handoff        */
+	request = UI_SCREEN_NONE;
+	handoff_hold = 0;
+	confirm_locked = false;
 }
 
 void campaign_input(uint8_t kind, uint32_t value) {
@@ -57,6 +67,9 @@ void campaign_input(uint8_t kind, uint32_t value) {
 		} else if (keys & KEY_B) {
 			return; /* B Back is unrouted pre-B12 (resolution on save) */
 		} else if (keys & KEY_A) {
+			if (confirm_locked) {
+				return; /* T032: over the 160 ms hold A is mute   */
+			}
 			const uint32_t treasury =
 			    (uint32_t)((const sim_snapshot_t *)sim_snapshot())->treasury;
 			const sim_province_record_t *tab = sim_province_table(NULL);
@@ -83,8 +96,16 @@ void campaign_input(uint8_t kind, uint32_t value) {
 			cmd.cmd = 0u; /* recruit */
 			cmd.arg = (uint8_t)focus;
 			if (sim_enqueue(&cmd)) {
-				/* R4 handoff: Base opens with the preset      */
-				request = UI_SCREEN_BASE;
+				/* T028 success line, byte-exact (spec-02 6.x);
+				 * treasury shown is post-debit.               */
+				snprintf(status_line, sizeof status_line,
+				         "%s: recruit queued, %u debited. "
+				         "Treasury %lu. Opening Recruit tab.",
+				         r->name, (unsigned)r->cost,
+				         (unsigned long)(treasury - r->cost));
+				status_frames = 10; /* 160 ms (spec-02 T028) */
+				handoff_hold = 10;
+				confirm_locked = true;
 			} else {
 				/* R7: 32/32 queued, inline, input preserved   */
 				snprintf(status_line, sizeof status_line,
@@ -101,11 +122,27 @@ ui_screen_t campaign_request(void) {
 	return r;
 }
 
+/* B13 (spec-02 T033): the focused row, read only at the commit
+ * boundary by ui -> queue; an out-of-time screen reports 0xFF.           */
+uint8_t campaign_focus_row(void) {
+	return (focus >= 0 && focus < (int)SIM_FRONT_COUNT)
+	           ? (uint8_t)focus
+	           : 0xFFu;
+}
+
 void campaign_frame(void) {
 	char line[80];
 	char action[16];
 	const sim_snapshot_t *snap = sim_snapshot();
 	const sim_province_record_t *tab = sim_province_table(NULL);
+
+	/* T030: the Base handoff lands after the 160 ms success hold.       */
+	if (handoff_hold > 0 && request == UI_SCREEN_NONE) {
+		if (--handoff_hold == 0) {
+			request = UI_SCREEN_BASE; /* R4 handoff: the preset   */
+			confirm_locked = false;
+		}
+	}
 
 	/* header: live treasury ticker + day (R2: <= 1 tick lag)             */
 	snprintf(line, sizeof line, "TREASURY %-9lu +2/DAY   DAY %u",

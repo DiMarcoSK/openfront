@@ -12,6 +12,9 @@
 void campaign_input(uint8_t kind, uint32_t value);
 void campaign_frame(void);
 void campaign_focus_province(uint8_t province);
+/* campaign_focus_row(): the focused list row of the live campaign
+ * screen; read by ui for the coalesced commit (B13 selection).           */
+uint8_t campaign_focus_row(void);
 /* campaign_request(): the screen ui.c should switch to this frame
  * (UI_SCREEN_NONE = none); the value resets on read.                     */
 ui_screen_t campaign_request(void);

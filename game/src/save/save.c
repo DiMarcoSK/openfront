@@ -75,6 +75,12 @@ save_status_t save_status(void) {
 	return current_status;
 }
 
+/* B14: the trace id of the save hop (spec-06 plan: one number joins
+ * the slot header, the status row and the log line).                    */
+uint32_t save_commit_seq(void) {
+	return commit_seq;
+}
+
 void save_set_dirty(void) {
 	dirty = true;
 }

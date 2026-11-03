@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Include-graph and colour-literal fitness functions (B01/B02).
+"""Include-graph, colour-literal and telemetry fitness functions (B01/B02/B14).
 
 Rule 1 - include-graph: a module may include a sibling module's public
 contract header ONLY. Reaching into another module's internals or a
@@ -9,6 +9,10 @@ non-contract header fails with a readable message (backlog B01: "a
 Rule 2 - palette: no hex colour literal outside include/contracts/tokens.h
 (constitution 1, B02 acceptance "0 hex colour literal outside the token
 header").
+
+Rule 3 - telemetry (B14 acceptance "0 network syscalls", SDD-7): no
+network header or socket call exists anywhere in src/ or contracts. The
+only egress is the emulator console (constitution 4).
 """
 from __future__ import annotations
 
@@ -27,6 +31,17 @@ HOSTINCLUDES_OK = {
 }
 
 HEX_LITERAL = re.compile(r"(?<![0-9A-Za-z_])[0-9A-F]{6}(?![0-9a-z_])")
+
+# Rule 3 (B14): network headers and socket-family calls. dswifi/maxmod
+# land with B25; this is the standing network-syscall gate.
+NET_HEADERS = re.compile(
+    r'#\s*include\s+[<"](sys/(socket|time)\.h|netdb\.h|arpa/inet\.h|'
+    r"netinet/[a-z_]+\.h|dswifi|\w*socket\w*\.h)[>\"]"
+)
+NET_CALLS = re.compile(
+    r"\b(socket|connect|bind|listen|accept|sendto|recvfrom|send|recv|"
+    r"getaddrinfo|gethostbyname|getpeername|res_query|poll|select)\s*\("
+)
 
 TOKENS_FILE = "tokens.h"
 
@@ -93,6 +108,22 @@ def main() -> int:
                         f"{cfile}:{ln} hex colour literal '{m.group(0)}'"
                         f" outside {TOKENS_FILE} (constitution 1)"
                     )
+            # Rule 3 (B14): 0 network syscalls - headers and calls, with
+            # comments stripped so prose like "select (R7)" stays prose.
+            stripped = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
+            for ln, line in enumerate(text.splitlines(), 1):
+                if NET_HEADERS.search(line):
+                    failures.append(
+                        f"{cfile}:{ln} network header include"
+                        " (B14: 0 network syscalls)"
+                    )
+            for m in NET_CALLS.finditer(stripped):
+                ln = stripped.count("\n", 0, m.start()) + 1
+                failures.append(
+                    f"{cfile}:{ln} network call '{m.group(1)}('"
+                    " (B14: 0 network syscalls)"
+                )
+                break  # one suffices to fail the file
     if failures:
         print("\n".join(f"- {f}" for f in failures))
         print(f"{len(failures)} violation(s).")

@@ -25,6 +25,12 @@ ui_screen_t ui_screen(void) {
 	return UI_SCREEN_NONE;
 }
 
+/* B13: the commit boundary reads the campaign focus; the host
+ * fixture keeps no live campaign screen, so it reports none.   */
+uint8_t ui_selected_row(void) {
+	return 0xFFu;
+}
+
 /* Save backend stubs: the coalesced boundary links save.c into this unit
  * (the save core itself is exercised by test_save/test_title).           */
 save_backend_kind_t backend_probe(void) { return SAVE_BACKEND_NONE; }

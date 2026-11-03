@@ -45,8 +45,10 @@ bool slot_decode(const uint8_t *image, save_slot_t *out) {
 	if (memcmp(h.magic, "TYCN", 4) != 0) {
 		return false;
 	}
-	if (h.format != 1u) {
-		return false; /* unknown format refuses to load (spec-06 R9). */
+	/* B13 (spec-02 T013): v1 loads forever with the selection byte
+	 * zero-filled (row 0); v2 honors it; anything else refuses.        */
+	if (h.format != SAVE_FORMAT_V1 && h.format != SAVE_FORMAT_V2) {
+		return false;
 	}
 	if (h.payload_len > sizeof(save_aggregate_t)) {
 		return false;
@@ -59,6 +61,11 @@ bool slot_decode(const uint8_t *image, save_slot_t *out) {
 	}
 	if (out != NULL) {
 		memmove(out, image, sizeof *out);
+		if (h.format == SAVE_FORMAT_V1) {
+			/* v1 spelled byte 62 "reserved": zero-fill, selection
+			 * defaults to row 0 - never a VERIFY_FAIL.           */
+			out->payload.selected_province = 0u;
+		}
 	}
 	return true;
 }
@@ -117,7 +124,7 @@ void slot_commit(uint8_t block[512], int active, const save_aggregate_t *snap,
 
 	memset(&slot, 0, sizeof slot);
 	memmove(slot.header.magic, "TYCN", 4);
-	slot.header.format = 1u;
+	slot.header.format = SAVE_FORMAT_V2; /* v1 -> v2 at byte 62 (B13) */
 	slot.header.slot = (uint8_t)other;
 	slot.header.seq = seq;
 	slot.header.day = day;
@@ -140,7 +147,7 @@ void slot_write_protocol(uint8_t block[512], int active,
 
 	memset(&staged, 0, sizeof staged);
 	memmove(staged.header.magic, "TYCN", 4);
-	staged.header.format = 1u;
+	staged.header.format = SAVE_FORMAT_V2; /* v1 -> v2 at byte 62 (B13) */
 	staged.header.slot = (uint8_t)write_idx;
 	staged.header.seq = seq;
 	staged.header.day = day;

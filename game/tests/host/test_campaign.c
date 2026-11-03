@@ -30,6 +30,12 @@ ui_screen_t ui_screen(void) {
 	return UI_SCREEN_CAMPAIGN;
 }
 
+/* B13: the commit boundary reads the campaign focus; the host
+ * fixture keeps no live campaign screen, so it reports none.   */
+uint8_t ui_selected_row(void) {
+	return 0xFFu;
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
 	(void)kind;
 	(void)value;
@@ -147,12 +153,34 @@ int main(void) {
 	campaign_input((uint8_t)UI_EVT_KEY, KEY_DOWN);
 	campaign_input((uint8_t)UI_EVT_KEY, KEY_DOWN); /* -> Front South 60   */
 	campaign_input((uint8_t)UI_EVT_KEY, KEY_A);
-	assert(campaign_request() == UI_SCREEN_BASE);
-	assert(campaign_request() == UI_SCREEN_NONE);
 	assert(sim_deploy_province() == -1); /* the preset lands at dispatch */
 	assert(sim_snapshot()->treasury == 580u); /* not debited pre-tick     */
 	assert(queue_diag()->cmd_depth == 1u);
-	printf("campaign: row Recruit -> 1 command queued, Base opens\n");
+	printf("campaign: row Recruit -> 1 command queued, footer holds\n");
+
+	clear_drawn();
+	campaign_frame();
+	assert(drawn_has("Front South: recruit queued, 60 debited. Treasury 520. "
+	                 "Opening Recruit tab."));
+	printf("campaign: success footer byte-exact for the 160 ms hold\n");
+
+	/* T032: hold A, mash A 20x during the hold -> 1 command, 1 debit.   */
+	for (int press = 0; press < 20; ++press) {
+		campaign_input((uint8_t)UI_EVT_KEY, KEY_A);
+	}
+	assert(queue_diag()->cmd_depth == 1u);
+
+	/* the handoff lands exactly after the 160 ms hold (10 frames);
+	 * the footer-draw frame above was the first of them.               */
+	for (int f = 0; f < 8; ++f) {
+		campaign_frame();
+		assert(campaign_request() == UI_SCREEN_NONE);
+	}
+	campaign_frame();
+	assert(campaign_request() == UI_SCREEN_BASE);
+	assert(campaign_request() == UI_SCREEN_NONE); /* consumed on read    */
+	printf("campaign: row Recruit -> 1 command queued, footer opens Base "
+	       "after the hold\n");
 
 	/* dispatch: one command, one debit (ensemble at the 10 Hz tick)      */
 	queue_frame(1u);
@@ -174,6 +202,27 @@ int main(void) {
 	assert(sim_snapshot()->treasury == 119u);
 	assert(queue_diag()->last_reject == QUEUE_REJECT_INSUFFICIENT);
 	printf("campaign: dispatch re-check -> +1 reject, 0 debit\n");
+
+	/* T031/T032: one seq replayed twice at dispatch: exactly 1
+	 * accepted command, 1 debit, reject log untouched (only true
+	 * rejections log).                                                  */
+	const uint32_t rejects_after_debit = queue_diag()->rejects_total;
+	ingest(580u, 12u);
+	memset(&cmd, 0, sizeof cmd);
+	cmd.seq = 11u;
+	cmd.cmd = 0u; /* Front West 120                                     */
+	assert(queue_enqueue_cmd(&cmd));
+	assert(queue_enqueue_cmd(&cmd));
+	queue_frame(3u);
+	sim_step(1u);
+	assert(sim_snapshot()->treasury == 580u - 120u);
+	assert(queue_diag()->rejects_total == rejects_after_debit);
+	/* the direct replay path: 2nd apply short-circuits with 0 debit
+	 * and SIM_DUPLICATE (no reject-log entry either)                   */
+	sim_cmd_t dup = cmd;
+	assert(sim_apply(&dup) == SIM_DUPLICATE);
+	assert(sim_snapshot()->treasury == 580u - 120u);
+	printf("campaign: replayed seq -> 1 accept, 1 debit, no reject log\n");
 
 	/* R5: unaffordable press: nothing enqueued, inline, input preserved  */
 	ingest(119u, 12u);

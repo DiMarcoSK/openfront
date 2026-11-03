@@ -35,7 +35,10 @@ void ui_input(uint8_t kind, uint32_t value);
 /* ui_screen(): current screen (spec 01-06 map it to the state machine).  */
 ui_screen_t ui_screen(void);
 
-/* ui_frame(): draw the current screen once; called by loop each VBlank.  */
+/* ui_selected_row(): the focused list row for the coalesced commit
+ * (B13, spec-02 T033, additive to v1); 0xFF when no list screen holds a
+ * selection.                                                             */
+uint8_t ui_selected_row(void);/* ui_frame(): draw the current screen once; called by loop each VBlank.  */
 void ui_frame(void);
 
 /* ui_set_screen(): switch the top-level screen (loop owns switches).     */

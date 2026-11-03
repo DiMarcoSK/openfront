@@ -51,6 +51,10 @@ def main() -> int:
     if ram < 0:
         return 1
     vram = vram_bytes()
+    if len(sys.argv) > 1 and sys.argv[1] == "DELIBERATE_OVERLOAD":
+        # B18 T025 acceptance probe: a deliberate 2.74+ MB RAM overrun
+        # must fail the gate exactly like a real regression would.
+        ram += int(RAM_CAP_KB + 6) * 1024
     ram_kb = (ram + 1023) // 1024
     vram_kb = (vram + 1023) // 1024
     print(f"  RAM   {ram_kb:4d} KB ({ram} B: .main.rw + .bss + tcm.bss)"

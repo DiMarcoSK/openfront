@@ -24,7 +24,7 @@ run() {
 
 # B03: the single conduit (save.c + slots are linked for the coalesced
 # boundary now; ui_screen/ui_input are stubs inside the test).
-build tests/host/test_queue.c src/queue/queue.c src/input/input.c \
+build tests/host/test_queue.c src/queue/queue.c src/loop/trace.c src/input/input.c \
       src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_queue.c
 
@@ -33,31 +33,64 @@ run tests/host/test_queue.c
 build tests/host/test_save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_save.c
 
+# B13: v1 -> v2 migration + selection byte 62 (spec 02 T013/T033).
+build tests/host/test_save_migrate.c src/save/migrate.c src/save/slots.c \
+      src/save/crc32.c src/save/save.c src/queue/queue.c src/loop/trace.c src/input/input.c \
+      src/sim/sim.c
+run tests/host/test_save_migrate.c
+
 # B07: boot -> title -> campaign handoff (spec 01 T008/T014-T018, T021).
-build tests/host/test_title.c src/ui/title.c src/queue/queue.c \
+build tests/host/test_title.c src/ui/title.c src/queue/queue.c src/loop/trace.c \
       src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
       src/save/crc32.c
 run tests/host/test_title.c
 
+# B11: fault-injection harness - 100 flipped-byte boots in slot 1 ->
+# 100 slot-2 fallbacks, 0 unplayable, 0 card writes (spec 01 T021).
+build tests/host/test_fault_slot.c src/ui/title.c src/queue/queue.c src/loop/trace.c \
+      src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
+      src/save/crc32.c
+run tests/host/test_fault_slot.c
+
 # B08: campaign list, affordability, ticker, 3-tap recruit handoff.
-build tests/host/test_campaign.c src/ui/campaign.c src/queue/queue.c \
+build tests/host/test_campaign.c src/ui/campaign.c src/queue/queue.c src/loop/trace.c \
       src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
       src/save/crc32.c
 run tests/host/test_campaign.c
 
 # B09: base slice (muster, chest, pending cap, autoform, swap).
-build tests/host/test_base.c src/ui/base.c src/queue/queue.c \
+build tests/host/test_base.c src/ui/base.c src/ui/base_tier.c src/queue/queue.c src/loop/trace.c \
       src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c \
       src/save/crc32.c
 run tests/host/test_base.c
 
+# B12: the scripted 3-tap path (campaign list -> Base stepper -> Confirm),
+# 20/20 runs (spec 02 T034).
+build tests/host/test_flow.c src/ui/campaign.c src/ui/base.c src/ui/base_tier.c \
+      src/queue/queue.c src/loop/trace.c src/input/input.c src/sim/sim.c src/save/save.c \
+      src/save/slots.c src/save/crc32.c
+run tests/host/test_flow.c
+
 # B10: battle deterministic seal, Continue-once, Retry, reboot restores.
-build tests/host/test_battle.c src/queue/queue.c src/input/input.c \
+build tests/host/test_battle.c src/queue/queue.c src/loop/trace.c src/input/input.c \
       src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
 run tests/host/test_battle.c
 
+# B14: the observability core (diag window, trace pump, overlay cycle).
+build tests/host/test_trace.c src/loop/diag.c src/loop/trace.c
+run tests/host/test_trace.c
+
+# B17: the tier-band pixel test (geometry, numeral, pin shapes, repaints).
+build tests/host/test_tier.c src/ui/base_tier.c
+run tests/host/test_tier.c
+
+# B20: speed x1/x2/x4 (R4 badge parity, R5 honest clamp, sub-steps).
+build tests/host/test_speed.c src/queue/queue.c src/loop/trace.c src/input/input.c \
+      src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
+run tests/host/test_speed.c
+
 # B05 cycle harness probe (ops counters -> tools/check_cycles.py gate).
-build tests/host/cycle_probe.c src/queue/queue.c src/input/input.c \
+build tests/host/cycle_probe.c src/queue/queue.c src/loop/trace.c src/input/input.c \
       src/sim/sim.c src/save/save.c src/save/slots.c src/save/crc32.c
 
 echo "host tests passed."

@@ -10,9 +10,11 @@
 
 #include "contracts/sim_api.h"
 #include "contracts/save.h"
+#include "contracts/audio.h"
 #include "contracts/ui.h"
 
 #include "ui_draw.h"
+#include "base_tier.h"
 #include "screens.h"
 
 /* ---- state -------------------------------------------------------------- */
@@ -24,6 +26,7 @@ static int status_frames;
 
 static int first_selected;          /* pending formation swap (slot 0..9) */
 static bool swap_pending;
+static int last_touch = -1;         /* B16 touch parity tap state         */
 
 static uint32_t cmd_seq;            /* monotonic per-boot idempotency key */
 
@@ -51,8 +54,7 @@ static uint8_t tier(void) {
 }
 
 /* Blocked reasons inline (spec-03 R3: "0 modals in 20 attempts").        */
-static bool confirm_blocked(char *reason, unsigned reason_sz) {
-	const sim_snapshot_t *snap = sim_snapshot();
+static bool confirm_blocked(char *reason, unsigned reason_sz) {	const sim_snapshot_t *snap = sim_snapshot();
 	const uint32_t cost = (uint32_t)SIM_COMPANY_COST * SIM_PULSE_QTY;
 	if (sim_chest() + SIM_PULSE_QTY > SIM_CHEST_CAP) {
 		snprintf(reason, reason_sz, "! Chest %u/%u: +5 needs %u.",
@@ -112,10 +114,106 @@ static int target_count(void) {
 	return (tab == 0) ? 3 : SIM_FORMATION_SLOTS + 1;
 }
 
-void base_input(uint8_t kind, uint32_t value) {
-	if (kind != (uint8_t)UI_EVT_KEY) {
-		return; /* touch parity lands with the B29 a11y pass      */
+/* The A action on the current focus, shared by the key and the touch
+ * path (B16 touch parity: two taps = ring then confirm, like the title).*/
+static void do_action(void) {
+	char reason[64];
+	if (tab == 0) {
+		switch (focus) {
+		case 0: /* the +5 stepper: one command per press        */
+			if (confirm_blocked(reason, sizeof reason)) {
+				say(reason); /* R3: nothing enqueued   */
+				audio_cue(AUDIO_CUE_FAILURE); /* T013 */
+			} else {
+				enqueue_cmd(3u, SIM_PULSE_QTY);
+				say("+5 queued (1 per 2 s).");
+				audio_cue(AUDIO_CUE_CONFIRM);
+			}
+			break;
+		case 1: /* Confirm: same +5 command                     */
+			if (confirm_blocked(reason, sizeof reason)) {
+				say(reason);
+				audio_cue(AUDIO_CUE_FAILURE);
+			} else {
+				enqueue_cmd(3u, SIM_PULSE_QTY);
+				say("5 queued: 60 g. Muster 1 per 2 s.");
+				audio_cue(AUDIO_CUE_CONFIRM);
+			}
+			break;
+		case 2: /* Deploy to the preset front                   */
+			deploy_or_block();
+			break;
+		default:
+			break;
+		}
+	} else {
+		if (focus == SIM_FORMATION_SLOTS) {
+			deploy_or_block();
+		} else if (!swap_pending) {
+			first_selected = focus; /* slot select (R7)    */
+			swap_pending = true;
+			snprintf(reason, sizeof reason,
+			         "Slot %d selected - pick target slot A.",
+			         focus + 1);
+			say(reason);
+		} else if (swap_pending && (focus == first_selected)) {
+			say("Pick a different slot.");
+		} else {
+			/* the swap enqueues through the conduit       */
+			const uint8_t pair = (uint8_t)((first_selected << 4u) | focus);
+			if (enqueue_cmd(1u, pair)) {
+				swap_pending = false;
+				say("Swapped pairs in line.");
+			}
+		}
 	}
+}
+
+/* B16 touch parity (spec-03 T019): tap 1 moves the ring, tap 2 on the
+ * same target commits. The hit map is the spec-03 32-px geometry:
+ * Recruit rows stepper / Confirm / Deploy; Formation = 2 rows x 5
+ * slot cards of 32 x 51 px, then the Deploy door. -1 = outside.         */
+static int touch_target(uint32_t value) {
+	const uint32_t px = (value >> 8) & 0xFFu;
+	const uint32_t py = value & 0xFFu;
+	if (py < 24u || py >= 128u) {
+		return -1;
+	}
+	if (tab == 0) {
+		if (py < 64u) return 0;
+		if (py < 96u) return 1;
+		return 2;
+	}
+	const int row = (py < 64u) ? 0 : 1;
+	const int col = (px < 51u) ? 0
+	    : (px < 102u) ? 1
+	    : (px < 153u) ? 2
+	    : (px < 204u) ? 3 : 4;
+	return row * 5 + col;
+}
+
+void base_input(uint8_t kind, uint32_t value) {
+	if (kind == (uint8_t)UI_EVT_TOUCH) {
+		const int t = touch_target(value);
+		if (t >= 0) {
+			if (t == last_touch) {
+				/* tap 2 on the same target: confirm (spec-01
+				 * 6.2 pattern: ring first, then act)         */
+				last_touch = -1;
+				do_action();
+			} else {
+				/* tap 1: the ring moves, nothing enqueued    */
+				focus = t;
+				last_touch = t;
+			}
+		}
+		return;
+	}
+	if (kind != (uint8_t)UI_EVT_KEY) {
+		return;
+	}
+	/* Any key edge retires the touch pending: the ring commits by key   */
+	last_touch = -1;
 	const uint32_t keys = value;
 	if (keys & (KEY_UP | KEY_DOWN)) {
 		focus += (keys & KEY_UP) ? -1 : 1;
@@ -130,52 +228,7 @@ void base_input(uint8_t kind, uint32_t value) {
 	} else if (keys & KEY_B) {
 		request = UI_SCREEN_CAMPAIGN; /* exit save boundary = coalesce */
 	} else if (keys & KEY_A) {
-		char reason[64];
-		if (tab == 0) {
-			switch (focus) {
-			case 0: /* the +5 stepper: one command per press        */
-				if (confirm_blocked(reason, sizeof reason)) {
-					say(reason); /* R3: nothing enqueued   */
-				} else {
-					enqueue_cmd(3u, SIM_PULSE_QTY);
-					say("+5 queued (1 per 2 s).");
-				}
-				break;
-			case 1: /* Confirm: same +5 command                     */
-				if (confirm_blocked(reason, sizeof reason)) {
-					say(reason);
-				} else {
-					enqueue_cmd(3u, SIM_PULSE_QTY);
-					say("5 queued: 60 g. Muster 1 per 2 s.");
-				}
-				break;
-			case 2: /* Deploy to the preset front                   */
-				deploy_or_block();
-				break;
-			default:
-				break;
-			}
-		} else {
-			if (focus == SIM_FORMATION_SLOTS) {
-				deploy_or_block();
-			} else if (!swap_pending) {
-				first_selected = focus; /* slot select (R7)    */
-				swap_pending = true;
-				snprintf(reason, sizeof reason,
-				         "Slot %d selected - pick target slot A.",
-				         focus + 1);
-				say(reason);
-			} else if (swap_pending && (focus == first_selected)) {
-				say("Pick a different slot.");
-			} else {
-				/* the swap enqueues through the conduit       */
-				const uint8_t pair = (uint8_t)((first_selected << 4u) | focus);
-				if (enqueue_cmd(1u, pair)) {
-					swap_pending = false;
-					say("Swapped pairs in line.");
-				}
-			}
-		}
+		do_action();
 	}
 }
 
@@ -189,6 +242,11 @@ void base_frame(void) {
 	char line[80];
 	const sim_snapshot_t *snap = sim_snapshot();
 	const uint8_t tier_now = tier();
+
+	/* B17: the 24 px band model repaints once per tier change (R9);
+	 * the pixel blit lands with the B27/B31 art sweep. The text row
+	 * beside it carries the word copy for the emulator console.          */
+	tier_band_paint(tier_now);
 
 	/* tier band (24 px pixel geometry lands with B17; text now)          */
 	snprintf(line, sizeof line, "TIER %u - %s",
@@ -214,23 +272,55 @@ void base_frame(void) {
 		snprintf(line, sizeof line, "%sCONFIRM 5 -%lu g",
 		         blocked ? "<" : "", (unsigned long)cost);
 		ui_draw_text(0, 6, line);
-		if (sim_muster_total() > 0u &&
-		    sim_muster_done() < sim_muster_total()) {
-			/* partial muster (R4): "N of M - 0:xx" countdown          */
+		/* Muster states, byte-exact copy (spec-03:151/154, T012):
+		 * Loading `Mustering n of m - 0:xx. n queued.`, Partial
+		 * `3 of 5 mustered - 0:04 left. 2 still in queue.`, Success
+		 * `5 mustered. Chest x/y. Treasury z g.` The remaining-time
+		 * math is the batch's own ticks at 10 Hz: m*20 - elapsed.     */
+		const uint32_t done = sim_muster_done();
+		const uint32_t total = sim_muster_total();
+		if (total > 0u && done < total) {
+			const uint32_t prog = SIM_MUSTER_TICKS -
+			                      sim_muster_ticks_left();
+			const uint32_t remain = total - done; /* incl. current */
+			const uint32_t left_ticks =
+			    remain * SIM_MUSTER_TICKS - prog;
+			const uint32_t left_s = (left_ticks + 9u) / 10u;
+			if (done == 0u) {
+				/* Loading (spec-03:151): the items stay card
+				 * pips - no spinner, one inline line.         */
+				snprintf(line, sizeof line,
+				         "Mustering 1 of %u - 0:%02u. "
+				         "%u queued.",
+				         (unsigned)total, (unsigned)left_s,
+				         (unsigned)remain);
+			} else {
+				/* Partial (spec-03:154): byte-exact copy.     */
+				snprintf(line, sizeof line,
+				         "%u of %u mustered - 0:%02u left. "
+				         "%u still in queue.",
+				         (unsigned)done, (unsigned)total,
+				         (unsigned)left_s, (unsigned)remain);
+			}
+		} else if (total > 0u) {
 			snprintf(line, sizeof line,
-			         "Mustering %u of %u - 0:%02u (%u in line %u/%u)",
-			         (unsigned)sim_muster_done(),
-			         (unsigned)sim_muster_total(),
-			         (unsigned)sim_muster_ticks_left() / 10u,
-			         (unsigned)sim_roster(),
-			         (unsigned)sim_muster_total(), SIM_PENDING_CAP);
+			         "%u mustered. Chest %u/%u. Treasury %lu g.",
+			         (unsigned)total, (unsigned)sim_chest(),
+			         (unsigned)SIM_CHEST_CAP,
+			         (unsigned long)snap->treasury);
 		} else {
 			snprintf(line, sizeof line,
-			         "Pending 0. %u/20 in line.", (unsigned)sim_roster());
+			         "No companies. Chest %u/%u. +5 costs %u g.",
+			         (unsigned)sim_chest(), SIM_CHEST_CAP,
+			         (unsigned)cost);
 		}
 		ui_draw_text(0, 8, line);
 	} else {
-		/* Formation tab: slots (R8: Empty labels for the rest)          */
+		/* Formation tab (B16, spec-03:152-154 byte-exact copy):
+		 * Empty `0/10. No companies to form. Recruit from the
+		 * Recruit tab.`; Partial `4 of 10 filled, 6 Empty.
+		 * Recruit 6 more, or deploy with 4.`; Full `10 of 10
+		 * filled, 0 Empty.`                                       */
 		const uint8_t *form = sim_formation();
 		uint8_t filled = 0u;
 		for (int i = 0; i < (int)SIM_FORMATION_SLOTS; ++i) {
@@ -238,8 +328,20 @@ void base_frame(void) {
 				filled++;
 			}
 		}
-		snprintf(line, sizeof line, "%u/10 in line  AUTO-FORM on exit",
-		         (unsigned)filled);
+		if (filled == 0u) {
+			snprintf(line, sizeof line,
+			         "%u/10. No companies to form. Recruit from"
+			         " the Recruit tab.", (unsigned)filled);
+		} else if (filled < SIM_FORMATION_SLOTS) {
+			snprintf(line, sizeof line,
+			         "%u of 10 filled, %u Empty. Recruit %u more,"
+			         " or deploy with %u.",
+			         (unsigned)filled, (unsigned)(10u - filled),
+			         (unsigned)(SIM_FORMATION_SLOTS - filled),
+			         (unsigned)filled);
+		} else {
+			snprintf(line, sizeof line, "10 of 10 filled, 0 Empty.");
+		}
 		ui_draw_text(0, 2, line);
 		for (int row = 0; row < 2; ++row) {
 			line[0] = '\0';

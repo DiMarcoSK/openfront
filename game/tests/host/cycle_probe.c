@@ -31,6 +31,12 @@ void backend_read_detail(uint32_t o, uint8_t *d, uint32_t l) { (void)o; (void)d;
 
 ui_screen_t ui_screen(void) { return UI_SCREEN_CAMPAIGN; }
 
+/* B13: the commit boundary reads the campaign focus; the host
+ * fixture keeps no live campaign screen, so it reports none.   */
+uint8_t ui_selected_row(void) {
+	return 0xFFu;
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
 	(void)kind;
 	(void)value;

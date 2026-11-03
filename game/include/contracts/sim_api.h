@@ -37,6 +37,7 @@ typedef enum sim_result {
 	SIM_QUEUE_FULL,
 	SIM_CHEST_FULL,      /* additive B09: chest 298/300 cap inline      */
 	SIM_BAD_ARG,
+	SIM_DUPLICATE,       /* additive B12: replayed seq short-circuits   */
 } sim_result_t;
 
 /* ---- battle outcome (spec-05 plan section 2, pinned by ADR-0002) ------- */
@@ -149,9 +150,10 @@ bool sim_front_taken(uint8_t province);
 void sim_set_run_mode(uint8_t modes);
 
 /* sim_apply(): the dispatch path - the conduit hands one envelope to the
- * economy. Re-cheque at dispatch = one command one debit; a failure
+ * economy. Re-check at dispatch = one command one debit; a failure
  * returns INSUFFICIENT/QUEUE_FULL/BAD_ARG and the queue logs the reject
- * (spec-02 R6/R7, spec-03 R3).                                            */
+ * (spec-02 R6/R7, spec-03 R3). A replayed `seq` short-circuits with
+ * SIM_DUPLICATE: 0 debit, no reject-log entry (B12, T031).                */
 sim_result_t sim_apply(const sim_cmd_t *cmd);
 
 /* sim_deploy_province(): campaign preset for the Base deploy handoff,
@@ -163,6 +165,13 @@ int8_t sim_deploy_province(void);
  * (spec-05 R4).                                                          */
 uint8_t sim_changed_province(void);
 void sim_clear_changed_province(void);
+
+/* B13 selection (spec-02 T033, additive): the campaign focus travels
+ * through the snapshot so the coalesced commit persists the focused row
+ * in the v2 byte 62; an out-of-range write is clamped to row 0 there
+ * too, never a VERIFY_FAIL.                                              */
+uint8_t sim_selected_province(void);
+void sim_set_selected(uint8_t province);
 
 /* ---- base slice (spec-03 R2-R8, B09) ----------------------------------- */
 
@@ -180,6 +189,11 @@ const uint8_t *sim_formation(void);
 
 /* sim_autoform(): deterministic 1-frame fill of the owned slots.         */
 void sim_autoform(void);
+
+/* sim_formation_hash(): FNV-1a over formation[10] (B16, T016): the
+ * layout id the golden test re-derives; equal runs -> equal hash, and
+ * it is 0 when every slot is Empty.                                      */
+uint16_t sim_formation_hash(void);
 
 /* sim_slot_swap(): one tick, roster sum invariant (spec-03 R7).          */
 bool sim_slot_swap(uint8_t a, uint8_t b);
@@ -221,5 +235,75 @@ sim_result_t sim_result_retry(void);
  * reserved[0], the muster batch reserved[1]; selection byte 62 stays
  * untouched (spec-02 T029).                                              */
 void sim_export_aggregate(save_aggregate_t *out);
+
+/* ---- speed x1/x2/x4 (spec-04 R4/R5, B20, T016-T019) -------------------- */
+
+/* 4 sub-steps per frame at x4, same turn rules (spec-04 OQ: T017).
+ * The per-unit gate (<= 150 cycles/unit) holds per sub-step; the
+ * 300k cycles/frame budget is SHARED across the sub-steps
+ * (docs/poc-battle.md), and the runtime clamp below is its ms guard:
+ * the sim slice must stay inside 4.0 ms (spec-02 T004).               */
+#define SIM_SPEED_X1 1u
+#define SIM_SPEED_X2 2u
+#define SIM_SPEED_X4 4u
+#define SIM_SLICE_US ((uint32_t)4000u) /* the 4.0 ms sim slice       */
+
+/* sim_set_speed(): a player request (x1/x2/x4; anything else reads x1).
+ * Applies on the next frame (R4): the ACTIVE rate starts equal to the
+ * request and the loop's slice feedback may clamp it down (R5) without
+ * touching the request. A fresh request owns a fresh clamp.            */
+void sim_set_speed(uint8_t mult);
+
+/* sim_speed(): the ACTIVE rate - the strip badge and the loop
+ * sub-stepper BOTH read this, so badge rate == sim rate by identity.   */
+uint8_t sim_speed(void);
+
+/* sim_speed_request(): what the player asked for (differs from active
+ * only while a clamp is live).                                         */
+uint8_t sim_speed_request(void);
+
+/* sim_speed_slice(): one loop feedback per 10 Hz frame with the measured
+ * sim slice in MICROSECONDS. Above the 4.0 ms slice the active rate
+ * downgrades ONE notch (x4 -> x2 -> x1) and the clamp record is kept so
+ * the strip can say what actually runs - no silent slowdown (R5).      */
+void sim_speed_slice(uint32_t slice_us);
+
+/* sim_speed_badge(): the strip badge text of the ACTIVE rate
+ * ("x1"/"x2"/"x4", R4: badge text equals active rate).                  */
+const char *sim_speed_badge(void);
+
+/* sim_speed_clamp_copy(): the R5 copy while a clamp is live, byte-exact
+ * per spec-04 states table ("Clamp: \"x4 -> x2: 4.9 ms > 4.0 ms.\""),
+ * NULL when the active rate equals the request (no clamp to show).     */
+const char *sim_speed_clamp_copy(void);
+
+/* ---- orders + one-tap undo (spec-04 R6-R12, B21, T020-T025) ------------ */
+
+#define SIM_ORDER_ADVANCE  0u /* dmg +1 on the consuming turn            */
+#define SIM_ORDER_HOLD     1u /* attrition suppressed that turn          */
+#define SIM_ORDER_FLANK    2u /* dmg +2 and one own loss forced          */
+#define SIM_ORDER_FALLBACK 3u /* dmg 0 and no own loss that turn         */
+
+/* sim_battle_state_hash(): FNV-1a fold over the live battle state (turn,
+ * enemies, roster, rng, pending ring). "Undo restores the pre-order
+ * hash" = this value before the undone order equals it after (R9).     */
+uint16_t sim_battle_state_hash(void);
+
+/* Order ring depth + FIFO peek (the 32-cap order channel of the
+ * conduit; deeper than 32 is the T025 inline reject).                    */
+uint8_t sim_orders_pending(void);
+uint8_t sim_order_at(uint8_t i);
+
+/* sim_undo_armed(): the single-level journal has a pre-order capture
+ * to restore; UNDO (cmd 9) consumes it, End turn (cmd 8) closes it.   */
+bool sim_undo_armed(void);
+
+/* sim_order_status(): the most recent battle order copy byte-exact:
+ * "%s queued." | spec-04 reject "Order not queued: 32/32 waiting. Undo
+ * 1 or End turn." | commit "Turn committed, undo closed." (shown for
+ * the 2 s hold) | undo ack. NULL = no copy to draw. The dispatch is
+ * synchronous, so the ack is on the next drawn frame (<= 16.7 ms,
+ * inside the 120 ms inline ack budget, R6).                            */
+const char *sim_order_status(void);
 
 #endif /* WAR_TABLE_SIM_API_H_V1 */

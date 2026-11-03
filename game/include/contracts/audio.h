@@ -17,6 +17,7 @@ typedef enum audio_cue {
 	AUDIO_CUE_ALERT,
 	AUDIO_CUE_BATTLE_END,
 	AUDIO_CUE_FAILURE,
+	AUDIO_CUE_SPEED, /* B20: speed request accept + honest clamp */
 } audio_cue_t;
 
 void audio_init(void);

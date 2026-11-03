@@ -2,13 +2,18 @@
 
 ## Read me first: what is done and what is trivial
 
-B01, B02, B03, B04, B06, **B07, B08, B09 and B10** of the backlog are
-**DONE and TRIVIAL — do not redo them**. Phase 1 is closed: the ROM already
-runs the full loop (title -> campaign -> base -> battle -> result -> reboot).
-Only the remaining items on the critical path are actual work:
+B01, B02, B03, B04, B06, **B07, B08, B09, B10, B11, B12 and B13** of the
+backlog are **DONE and TRIVIAL — do not redo them**. Phase 1 is closed: the
+ROM already runs the full loop (title -> campaign -> base -> battle ->
+result -> reboot), the save is v1->v2 migrated (selection byte 62) and the
+save is tamper-harnessed. The remaining critical-path items are actual work:
 
-- Next up, in order: **B11 (title failure paths)**, **B12 (campaign
-  command path)** and **B13/B14/B19**.
+- Next up: **B19 (ADR-0007 POC sweep)**, then B20-B22 (battle), B24-B26
+  (save/result), B27-B30 polish. **Phase 3 (Epic E4 Base) is CLOSED**:
+  B14 (observability), B15 (recruit states + SFX), B16 (formation hash +
+  N/10 + touch parity), B17 (tier band 24 px pixel model) and B18
+  (budget probe proven + rollback fixtures + `game/docs/base.md`)
+  all DONE - see BACKLOG.md status lines.
 - **B05 is mostly done** (include-graph + real byte budget + cycle
   harness + 8/8 contrast + golden frame hash + save profiles all wired;
   only the 2-emulator capture runner (B31) and the ADR-0007 device POC

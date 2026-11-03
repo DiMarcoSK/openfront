@@ -10,6 +10,7 @@
 
 #include "ui_draw.h"
 #include "title.h"
+#include "overlay.h"
 #include "screens.h"
 
 #include "contracts/ui.h"
@@ -82,6 +83,12 @@ ui_screen_t ui_screen(void) {
 	return current;
 }
 
+/* B13 (spec-02 T033): the row the coalesced commit should persist;
+ * 0xFF when no list screen owns a selection. Additive to ui.h v1.        */
+uint8_t ui_selected_row(void) {
+	return (current == UI_SCREEN_CAMPAIGN) ? campaign_focus_row() : 0xFFu;
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
 	switch (current) {
 	case UI_SCREEN_TITLE:
@@ -105,13 +112,16 @@ void ui_input(uint8_t kind, uint32_t value) {
 }
 
 /* handoff_to_campaign(): standard entry into Campaign: the changed row
- * focus follows an applied outcome (spec-05 R4), a B07 load falls back to
- * row 0.                                                                 */
+ * focus follows an applied outcome (spec-05 R4); otherwise the focus
+ * restores the persisted selection byte 62 (B13 T033: reboot puts the
+ * saved row back, out-of-range fell back to row 0 at ingest).            */
 static void enter_campaign(void) {
 	const uint8_t changed = sim_changed_province();
 	if (changed != 0xFFu) {
 		campaign_focus_province(changed);
 		sim_clear_changed_province();
+	} else {
+		campaign_focus_province(sim_selected_province());
 	}
 	ui_set_screen(UI_SCREEN_CAMPAIGN);
 }
@@ -136,6 +146,7 @@ void ui_frame(void) {
 		if (title_state() == TITLE_HANDOFF) {
 			shell_title_handoff(); /* spec-01 R2 handoff */
 		}
+		overlay_frame();
 		return;
 
 	case UI_SCREEN_CAMPAIGN:
@@ -146,6 +157,7 @@ void ui_frame(void) {
 				ui_set_screen(r);
 			}
 		}
+		overlay_frame();
 		return;
 
 	case UI_SCREEN_BASE:
@@ -158,6 +170,7 @@ void ui_frame(void) {
 				ui_set_screen(r);
 			}
 		}
+		overlay_frame();
 		return;
 
 	case UI_SCREEN_BATTLE:
@@ -166,6 +179,7 @@ void ui_frame(void) {
 			return;
 		}
 		battle_frame();
+		overlay_frame();
 		return;
 
 	case UI_SCREEN_RESULT:
@@ -178,9 +192,11 @@ void ui_frame(void) {
 			/* Retry accepted: back to the live battle (R6).        */
 			ui_set_screen(UI_SCREEN_BATTLE);
 		}
+		overlay_frame();
 		return;
 
 	default:
-		break; /* Settings: B24 */
+		overlay_frame(); /* Settings: B24 */
+		break;
 	}
 }

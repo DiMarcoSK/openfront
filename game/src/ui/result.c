@@ -11,6 +11,7 @@
 
 #include "contracts/sim_api.h"
 #include "contracts/save.h"
+#include "contracts/queue.h"
 #include "contracts/ui.h"
 
 #include "ui_draw.h"
@@ -64,6 +65,18 @@ void result_frame(void) {
 	if (o == NULL) {
 		ui_draw_text(0, 0, "RESULT: awaiting the sealed outcome");
 		return;
+	}
+	static bool dev_line_done;
+	if (!dev_line_done) {
+		/* B14 (spec-05 T021): the dev trace line, harness only, no
+		 * shipped telemetry; render_ms = the diag frame window's max. */
+		dev_line_done = true;
+		iprintf("t=result dev battle_id=%lu result=%u "
+		        "delta=%ld render_ms=%lu save=%u\n",
+		        (unsigned long)o->battle_id,
+		        (unsigned)o->result, (long)o->treasury_delta,
+		        (unsigned long)diag_stats()[DIAG_KEY_FRAME_MS].max,
+		        (unsigned)save_status());
 	}
 	const sim_snapshot_t *snap = sim_snapshot();
 	const sim_province_record_t *tab = sim_province_table(NULL);

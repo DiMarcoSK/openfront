@@ -38,7 +38,12 @@ typedef struct save_aggregate {
 	uint16_t unit_count;
 	uint16_t unit_type_aggregates[6];
 	uint8_t pending_reward;
-	uint8_t reserved[63 - 4 - 4 - 4 - 4 - 6 - 1 - 2 - 12 - 1];
+	/* B13 (spec-02 plan section 2): byte 62 of the aggregate is the
+	 * campaign selection; bytes 38..61 stay reserved. A v1 record's
+	 * byte 62 is reserved data, so the v1 reader zero-fills it and the
+	 * selection defaults to row 0.                                  */
+	uint8_t reserved[63 - 4 - 4 - 4 - 4 - 6 - 1 - 2 - 12 - 1 - 1];
+	uint8_t selected_province;
 } save_aggregate_t;
 
 typedef struct save_slot {
@@ -125,5 +130,23 @@ void save_set_day(uint16_t day);
  * no commit runs on tick or row action.                                  */
 void save_set_dirty(void);
 bool save_is_dirty(void);
+
+/* ---- additive B14: the trace id of the save hop (spec-06 plan SLO) -----
+ * The commit seq is the trace id that joins the status row, the slot
+ * header and the log line (spec-06 plan: "one number, three hops").      */
+uint32_t save_commit_seq(void);
+
+/* ---- additive B13: the v1 -> v2 migration (spec-02 T013) ---------------
+ * New commits write format 2 (selection byte 62 honored). A v1 record
+ * loads forever with the selection defaulted to row 0 (zero-fill);
+ * unknown formats still refuse to load.                                  */
+#define SAVE_FORMAT_V1 1u
+#define SAVE_FORMAT_V2 2u
+
+/* save_rollback_v1(): the tested rollback writer - encode the v1 subset
+ * (format 1, selection byte 62 = 0) into `out[170]` with a recomputed
+ * CRC-32 so the rollback image loads in the frozen v1 reader.            */
+void save_encode_v1(const save_aggregate_t *snap, uint32_t seq,
+                    uint16_t day, uint8_t out[170]);
 
 #endif /* WAR_TABLE_SAVE_H_V1 */

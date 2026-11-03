@@ -57,6 +57,12 @@ ui_screen_t ui_screen(void) {
 	return UI_SCREEN_TITLE; /* coalesce holds on the title: 0 writes */
 }
 
+/* B13: the commit boundary reads the campaign focus; the host
+ * fixture keeps no live campaign screen, so it reports none.   */
+uint8_t ui_selected_row(void) {
+	return 0xFFu;
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
 	(void)kind;
 	(void)value; /* the title path pushes input via title_input */

@@ -22,6 +22,12 @@ ui_screen_t ui_screen(void) {
 	return UI_SCREEN_CAMPAIGN; /* commit boundary coalesces here */
 }
 
+/* B13: the commit boundary reads the campaign focus; the host
+ * fixture keeps no live campaign screen, so it reports none.   */
+uint8_t ui_selected_row(void) {
+	return 0xFFu;
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
 	(void)kind;
 	(void)value;
@@ -46,9 +52,10 @@ void backend_write_detail(uint32_t o, const uint8_t *s, uint32_t l) { (void)o; (
 void backend_read_detail(uint32_t o, uint8_t *d, uint32_t l) { (void)o; (void)d; (void)l; }
 
 static bool enqueue_cmd(uint8_t id, uint8_t arg) {
+	static uint32_t fixture_seq; /* B12: one seq = one debit, monotonic */
 	sim_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.seq = (uint32_t)(id * 1000u + arg);
+	cmd.seq = ++fixture_seq;
 	cmd.cmd = id;
 	cmd.arg = arg;
 	return queue_enqueue_cmd(&cmd);

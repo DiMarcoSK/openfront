@@ -11,6 +11,7 @@
 
 uint32_t render_stub_backdrop[2];
 uint32_t render_stub_sprites;
+uint32_t render_stub_fallen;  /* squads drawn as the fallen (anim DEATH) */
 uint32_t render_stub_god_frames_drawn;
 
 void ui_draw_layout(const ui_row_t *rows, uint8_t n) { (void)rows; (void)n; }
@@ -26,6 +27,8 @@ void render_backdrop(render_screen_t s, uint8_t backdrop, uint8_t god) {
 }
 void render_camera(int x, int y) { (void)x; (void)y; }
 void render_flash(uint8_t level) { (void)level; }
+int render_lane_dy(uint8_t b, uint8_t l, int x) { (void)b; (void)l; (void)x; return 0; }
+void render_lane_span(uint8_t b, uint8_t l, int *x0, int *x1) { (void)b; (void)l; *x0 = 0; *x1 = 511; }
 int render_text_width(const char *t) {
 	const int n = (int)strlen(t);
 	return n ? n * 6 - 1 : 0;
@@ -70,6 +73,9 @@ void render_squad(uint8_t civ, uint8_t cls, uint8_t st, uint8_t anim_,
 	(void)civ; (void)cls; (void)st; (void)anim_; (void)step; (void)x;
 	(void)y; (void)f;
 	render_stub_sprites++;
+	if (anim_ == RENDER_ANIM_DEATH) {
+		render_stub_fallen++;
+	}
 }
 void render_portrait(render_screen_t s, uint8_t civ, uint8_t cls,
                      uint8_t anim_, uint32_t step, int x, int y, uint8_t f) {

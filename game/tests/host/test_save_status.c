@@ -256,6 +256,7 @@ int main(void) {
 		fresh_card();
 		sim_init(1u);
 		save_aggregate_t a = agg_of(580u);
+		a.unit_count = 10u; /* enough to win: the delta must be real   */
 		sim_ingest_save(&a, 12u);
 		sim_cmd_t d;
 		memset(&d, 0, sizeof d);

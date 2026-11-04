@@ -18,9 +18,9 @@ static const art_range_t ART_ANIM_CAVALRY[ART_ANIMS] = {{0, 2}, {2, 4}, {6, 3}, 
 static const art_range_t ART_ANIM_GENERAL[ART_ANIMS] = {{0, 2}, {2, 4}, {6, 3}, {9, 2}, {11, 1}, {12, 3}};
 
 /* Battle-scale squads: {first, count} per strength (12/9/6/3 men) x anim. */
-enum { ART_SQ_IDLE, ART_SQ_WALK, ART_SQ_ATTACK, ART_SQ_ANIMS };
+enum { ART_SQ_IDLE, ART_SQ_WALK, ART_SQ_ATTACK, ART_SQ_DEATH, ART_SQ_ANIMS };
 enum { ART_SQ_12, ART_SQ_9, ART_SQ_6, ART_SQ_3, ART_SQ_STRENGTHS };
-static const art_range_t ART_SQUAD[ART_SQ_STRENGTHS][ART_SQ_ANIMS] = {{{0, 2}, {2, 4}, {6, 3}}, {{9, 2}, {11, 4}, {15, 3}}, {{18, 2}, {20, 4}, {24, 3}}, {{27, 2}, {29, 4}, {33, 3}}};
+static const art_range_t ART_SQUAD[ART_SQ_STRENGTHS][ART_SQ_ANIMS] = {{{0, 2}, {2, 4}, {6, 3}, {36, 3}}, {{9, 2}, {11, 4}, {15, 3}, {36, 3}}, {{18, 2}, {20, 4}, {24, 3}, {36, 3}}, {{27, 2}, {29, 4}, {33, 3}, {36, 3}}};
 static const art_range_t ART_SQUAD_GENERAL[3] = {{0, 2}, {2, 4}, {6, 2}};
 
 /* Gods: 128x128 frames, each 4 contiguous 64x64 blocks (TL, TR, BL, BR). */

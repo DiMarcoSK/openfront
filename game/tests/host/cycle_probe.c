@@ -98,7 +98,7 @@ int main(void) {
 	printf("battle_ops_per_step=%lu\n", (unsigned long)battle_ops);
 	printf("roster_cap=%u\n", (unsigned)255u);
 	printf("chips_cap=%u\n", (unsigned)SIM_BATTLE_UNITS);
-	printf("battle_turn=%u sealed=%d\n", (unsigned)sim_battle_turn(),
+	printf("battle_time=%u sealed=%d\n", (unsigned)sim_battle_time(),
 	       (int)sim_battle_sealed());
 	return 0;
 }

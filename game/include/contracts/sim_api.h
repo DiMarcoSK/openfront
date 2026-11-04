@@ -199,21 +199,27 @@ uint16_t sim_formation_hash(void);
 /* sim_slot_swap(): one tick, roster sum invariant (spec-03 R7).          */
 bool sim_slot_swap(uint8_t a, uint8_t b);
 
-/* ---- battle + result (spec-04 R1-R12, spec-05 R1-R9, B10) -------------- */
+/* ---- battle + result (spec-04 R1-R12, spec-05 R1-R9, B10) --------------
+ * ADR-0008: the battle runs in REAL TIME (RTS auto-battle, GAME_DESIGN 7):
+ * divisions march, wheel, clash and rout on a field; there are no turns.
+ * One sim_battle_step() is one 10 Hz tick; x2/x4 run 2/4 ticks per 10 Hz
+ * frame with the same rules (the speed never changes the outcome).      */
 
-#define SIM_BATTLE_TURNS 9u   /* 9 turns cap (spec-04 wireframe T7/9)    */
 #define SIM_BATTLE_UNITS 64u  /* animated chips cap (R3)                 */
-/* Art pass pacing: the loop resolves one turn per 10 sub-ticks (1 s at
- * x1) so an order can be read and taken back before it lands; the sim
- * step itself is unchanged (host tests call it per turn).             */
-#define SIM_BATTLE_TICKS_PER_TURN 10u
+#define SIM_BATTLE_HZ 10u     /* field ticks per second at x1            */
+/* 5 min at x1 (GDD 7: a common battle lasts 2-5 min); the Harpe adds
+ * SIM_BATTLE_TIME_HARPE. Reaching the cap seals a defeat (the foe holds
+ * the field).                                                          */
+#define SIM_BATTLE_TIME_CAP   3000u
+#define SIM_BATTLE_TIME_HARPE 600u
 
-/* sim_battle_step(): 10 Hz call while a battle is live; ends <= 9 turns
- * later. The 300k sim-cycle ceiling is hardware-measured by B05/B19.     */
+/* sim_battle_step(): one 10 Hz field tick while a battle is live. The
+ * 300k sim-cycle ceiling is hardware-measured by B05/B19.              */
 void sim_battle_step(void);
 
 bool sim_battle_active(void);
-uint8_t sim_battle_turn(void);
+uint16_t sim_battle_time(void);       /* ticks fought (0 at deploy)      */
+uint16_t sim_battle_time_cap(void);   /* ticks before the field is lost */
 uint8_t sim_battle_enemies(void);
 uint8_t sim_battle_province(void);
 uint8_t sim_battle_units(void);       /* chips on field, cap 64 (R3)     */
@@ -282,40 +288,65 @@ const char *sim_speed_badge(void);
  * NULL when the active rate equals the request (no clamp to show).     */
 const char *sim_speed_clamp_copy(void);
 
-/* ---- orders + one-tap undo (spec-04 R6-R12, B21, T020-T025) ------------ */
+/* ---- stances + one-tap undo (spec-04 R6-R12 as amended by ADR-0008) ----
+ * An order is a STANCE for the whole army, live from the next tick until
+ * the next order (cmd 7). No queue, no End turn: the field never waits.
+ * Undo (cmd 9) puts the previous stance back (single level).           */
 
-#define SIM_ORDER_ADVANCE  0u /* dmg +1 on the consuming turn            */
-#define SIM_ORDER_HOLD     1u /* attrition suppressed that turn          */
-#define SIM_ORDER_FLANK    2u /* dmg +2 and one own loss forced          */
-#define SIM_ORDER_FALLBACK 3u /* dmg 0 and no own loss that turn         */
+#define SIM_ORDER_ADVANCE  0u /* close and fight                         */
+#define SIM_ORDER_HOLD     1u /* stand fast: -25% taken, morale climbs   */
+#define SIM_ORDER_FLANK    2u /* wings + riders wheel onto the foe's rear */
+#define SIM_ORDER_FALLBACK 3u /* disengage: -50% taken, 0 melee dealt    */
 
-/* sim_battle_state_hash(): FNV-1a fold over the live battle state (turn,
- * enemies, roster, rng, pending ring). "Undo restores the pre-order
- * hash" = this value before the undone order equals it after (R9).     */
+/* sim_battle_state_hash(): FNV-1a fold over the live battle state (time,
+ * stance, every division, morale, rng). Same seed + same inputs at the
+ * same ticks = same trail (ADR-0007, the B23 golden).                  */
 uint16_t sim_battle_state_hash(void);
 
-/* Order ring depth + FIFO peek (the 32-cap order channel of the
- * conduit; deeper than 32 is the T025 inline reject).                    */
-uint8_t sim_orders_pending(void);
-uint8_t sim_order_at(uint8_t i);
+uint8_t sim_battle_stance(void);      /* SIM_ORDER_* in force            */
 
-/* sim_undo_armed(): the single-level journal has a pre-order capture
- * to restore; UNDO (cmd 9) consumes it, End turn (cmd 8) closes it.   */
+/* sim_undo_armed(): a stance change can be taken back (cmd 9).        */
 bool sim_undo_armed(void);
 
-/* sim_order_status(): the most recent battle order copy byte-exact:
- * "%s queued." | spec-04 reject "Order not queued: 32/32 waiting. Undo
- * 1 or End turn." | commit "Turn committed, undo closed." (shown for
- * the 2 s hold) | undo ack. NULL = no copy to draw. The dispatch is
- * synchronous, so the ack is on the next drawn frame (<= 16.7 ms,
- * inside the 120 ms inline ack budget, R6).                            */
+/* sim_order_status(): the latest order copy: "Stance: %s." | undo ack |
+ * an ability refusal. NULL = nothing to draw; the copy falls away 2 s
+ * of wall time after it was set (x4 does not shorten it).               */
 const char *sim_order_status(void);
+
+/* ---- the field: divisions for the art + the minimap (ADR-0008) ---------
+ * Each side fields up to SIM_DIVISIONS divisions; ours are the formation
+ * slots (class by slot), theirs come from the front. x is in map px of
+ * the 512 px field (ours start west, facing east). Read-only views. */
+#define SIM_DIVISIONS 10u
+enum { SIM_SIDE_OURS = 0, SIM_SIDE_FOE };
+enum { SIM_CLS_INFANTRY = 0, SIM_CLS_ARCHERS, SIM_CLS_CAVALRY };
+enum { SIM_LANE_NORTH = 0, SIM_LANE_CENTRE, SIM_LANE_SOUTH, SIM_LANES };
+enum { SIM_DIV_MARCH = 0, SIM_DIV_FIGHT, SIM_DIV_SHOOT, SIM_DIV_WHEEL,
+       SIM_DIV_HOLD, SIM_DIV_ROUT, SIM_DIV_DEAD };
+#define SIM_DIV_FLANKING 0x1u /* striking a side or the rear            */
+#define SIM_DIV_FLANKED  0x2u /* struck in the side or the rear        */
+
+#pragma pack(push, 1)
+typedef struct sim_division {
+	int16_t x;
+	uint8_t lane;
+	uint8_t cls;
+	uint8_t companies;        /* standing now (cap 255 on the view)   */
+	uint8_t companies_start;
+	uint8_t state;            /* SIM_DIV_*                             */
+	uint8_t flags;            /* SIM_DIV_FLANKING | SIM_DIV_FLANKED    */
+} sim_division_t;
+#pragma pack(pop)
+_Static_assert(sizeof(sim_division_t) == 8, "division view pins to 8 B");
+
+/* sim_battle_divisions(): the side's view array; *count = divisions. */
+const sim_division_t *sim_battle_divisions(uint8_t side, uint8_t *count);
 
 /* ---- battle handoff + resume (spec-04 R12, B22, T027-T029) ------------- */
 
 /* sim_ingest_rejected_midturn(): the last ingested aggregate carried the
- * in-battle marker (reserved[3]) and was refused as mid-turn state - the
- * run restarts at the table; a deploy always starts at turn 1 (T029).  */
+ * in-battle marker (reserved[3]) and was refused as mid-battle state -
+ * the run restarts at the table; a deploy always starts at tick 0.     */
 bool sim_ingest_rejected_midturn(void);
 
 /* sim_battle_enemies_start(): the enemy strength the front opened with
@@ -343,16 +374,18 @@ enum { SIM_BOSS_ZEUS = 0, SIM_BOSS_POSEIDON, SIM_BOSS_HADES, SIM_BOSS_ARES,
        SIM_BOSS_KRONOS, SIM_BOSSES };
 #define SIM_BOSS_NONE 0xFFu
 enum { SIM_ABILITY_RALLY = 0, SIM_ABILITY_CHARGE, SIM_ABILITIES };
-#define SIM_RALLY_COOLDOWN  4u  /* turns                                  */
-#define SIM_CHARGE_COOLDOWN 5u
+#define SIM_RALLY_COOLDOWN  30u /* seconds of field time                  */
+#define SIM_CHARGE_COOLDOWN 30u
+#define SIM_RALLY_TICKS     60u /* the rally holds the wings 6 s          */
+#define SIM_CHARGE_TICKS    60u /* the charge drives 6 s                  */
 #define SIM_MORALE_MAX      100u
 enum { SIM_FLANK_SECURE = 0, SIM_FLANK_PRESSED, SIM_FLANK_BROKEN };
-/* alerts, ordered by priority (one per turn, the highest wins)          */
-enum { SIM_EVT_NONE = 0, SIM_EVT_FLANK_HELD, SIM_EVT_WAVERING,
-       SIM_EVT_FOE_ROUT, SIM_EVT_FLANK_BROKEN, SIM_EVT_CAV_CHARGE,
-       SIM_EVT_BOSS_OMEN, SIM_EVT_BOSS_COUNTERED, SIM_EVT_BOSS_STRIKE,
-       SIM_EVT_BOSS_PHASE, SIM_EVT_COLLAPSE, SIM_EVT_RALLY, SIM_EVT_CHARGE,
-       SIM_EVT_COUNT };
+/* alerts, ordered by priority (one per tick, the highest wins)          */
+enum { SIM_EVT_NONE = 0, SIM_EVT_CLASH, SIM_EVT_FLANK_HELD,
+       SIM_EVT_WAVERING, SIM_EVT_FOE_ROUT, SIM_EVT_FLANK_BROKEN,
+       SIM_EVT_CAV_CHARGE, SIM_EVT_AMBUSH, SIM_EVT_BOSS_OMEN,
+       SIM_EVT_BOSS_COUNTERED, SIM_EVT_BOSS_STRIKE, SIM_EVT_BOSS_PHASE,
+       SIM_EVT_COLLAPSE, SIM_EVT_RALLY, SIM_EVT_CHARGE, SIM_EVT_COUNT };
 
 uint8_t sim_formation_kind(void);
 const char *sim_formation_name(uint8_t kind);
@@ -374,14 +407,48 @@ uint8_t sim_battle_morale(void);                 /* 0..100                */
 uint8_t sim_battle_foe_morale(void);
 uint8_t sim_battle_flank(void);                  /* SIM_FLANK_*           */
 uint8_t sim_battle_boss_phase(void);             /* 0 none, 1, 2          */
-uint8_t sim_battle_turn_cap(void);               /* 9, 10 with the harpe  */
-uint8_t sim_ability_cooldown(uint8_t ability);   /* 0 = ready             */
-bool sim_charge_armed(void);
+uint8_t sim_battle_boss(void);                   /* SIM_BOSS_* or NONE    */
+uint8_t sim_ability_cooldown(uint8_t ability);   /* seconds, 0 = ready    */
+bool sim_charge_armed(void);                     /* the charge is driving */
+/* the god's next blow, in seconds (0 = none due / no god): the strip
+ * counts it down so the omen is a plan, not a surprise (GDD 8).       */
+uint8_t sim_battle_boss_eta(void);
 
 /* the latest alert: the seq bumps once per new alert so ui shows each
  * exactly once; the copy is NULL for SIM_EVT_NONE.                      */
 uint8_t sim_battle_event(void);
 uint16_t sim_battle_event_seq(void);
 const char *sim_battle_event_copy(void);
+
+/* ---- the endless campaign (GAME_DESIGN 6, ADR-0009) ---------------------
+ * The empire never stops being tested: after a calm of a few days a
+ * threat lands on a held front (invasion, rebellion, siege, raid, or -
+ * every 10 battles won - a god's wrath). Answer it before its days run
+ * out or the front falls and has to be retaken. Each 10 battles won is
+ * an era: foes grow, plunder grows. All of it rides spare bytes of the
+ * v1 aggregate (save-format.md), 0 = an older record's neutral value.  */
+enum { SIM_WAR_CONQUEST = 0, SIM_WAR_INVASION, SIM_WAR_REBELLION,
+       SIM_WAR_SIEGE, SIM_WAR_RAID, SIM_WAR_WRATH, SIM_WAR_RECONQUEST,
+       SIM_WAR_KINDS };
+/* what a campaign row offers                                           */
+enum { SIM_ACT_ATTACK = 0, SIM_ACT_RETAKE, SIM_ACT_DEFEND, SIM_ACT_HELD };
+#define SIM_WAR_NONE 0xFFu
+
+uint8_t sim_war_event(void);         /* SIM_WAR_INVASION.. or NONE        */
+uint8_t sim_war_province(void);      /* the threatened front, 0xFF none  */
+uint8_t sim_war_days_left(void);     /* days to answer it                */
+uint8_t sim_war_calm(void);          /* days until the next threat       */
+uint16_t sim_war_seq(void);          /* bumps on every threat and verdict */
+const char *sim_war_name(uint8_t kind);
+const char *sim_war_copy(void);      /* the live threat, <= 40 chars     */
+const char *sim_war_news(void);      /* the last verdict, NULL if none   */
+
+uint8_t sim_era(void);               /* battles won / 10                 */
+uint16_t sim_battles_won(void);
+bool sim_front_lost(uint8_t province);        /* held once, then lost   */
+uint8_t sim_front_action(uint8_t province);   /* SIM_ACT_*              */
+uint16_t sim_front_cost(uint8_t province);    /* 0 to defend            */
+uint16_t sim_front_reward(uint8_t province);  /* with era + the threat  */
+uint8_t sim_battle_kind(void);                /* SIM_WAR_* being fought */
 
 #endif /* WAR_TABLE_SIM_API_H_V1 */

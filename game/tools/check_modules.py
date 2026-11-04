@@ -32,7 +32,8 @@ HOSTINCLUDES_OK = {
 
 # The generated art headers (tools/art/export.py -> art/ds) belong to the
 # render module alone: it is the only writer to VRAM (render.h v1).
-ART_HEADERS = {"art_assets.h", "art_assets_game.h", "art_index.h", "art_palettes.h"}
+ART_HEADERS = {"art_assets.h", "art_assets_game.h", "art_index.h", "art_palettes.h",
+               "art_terrain.h"}
 
 # Rule 4 (B25, ADR-0003): the licence/surface gate - no maxmod include
 # (LibXM7 is the chosen mixer) anywhere in src/ or the contracts.

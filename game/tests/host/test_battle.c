@@ -80,7 +80,7 @@ static void ingest_full(uint32_t treasury, uint16_t day, uint8_t roster,
 static battle_outcome_t run_battle(void) {
 	battle_outcome_t sealed;
 	memcpy(&sealed, sim_seal_outcome(), sizeof sealed);
-	assert(sim_battle_turn() <= SIM_BATTLE_TURNS);
+	assert(sim_battle_time() <= sim_battle_time_cap());
 	assert(sim_battle_units() <= 64u); /* the OAM budget (R3)            */
 	return sealed;
 }int main(void) {
@@ -91,7 +91,7 @@ static battle_outcome_t run_battle(void) {
 	bool have_ref = false;
 	for (int run = 0; run < 10; ++run) {
 		sim_init(1u);
-		ingest_full(580u, 12u, 5u, 4242u); /* same rng_state           */
+		ingest_full(580u, 12u, 10u, 4242u); /* same rng_state          */
 		assert(enqueue_cmd(4u, 3u));  /* deploy Front South (LOW, 6 e) */
 		dispatch_all();
 		while (sim_battle_active()) {
@@ -116,7 +116,7 @@ static battle_outcome_t run_battle(void) {
 	printf("battle: outcome 22 B fields complete (version/id/result/"
 	       "deltas/units/tier)\n");
 
-	/* defeat path: the CRIT front at 9 turns downs a small division      */
+	/* defeat path: the CRIT front downs a small division                */
 	sim_init(1u);
 	ingest_full(580u, 12u, 5u, 4242u);
 	assert(enqueue_cmd(4u, 2u)); /* Front North: CRIT -> 15 enemies       */
@@ -128,7 +128,7 @@ static battle_outcome_t run_battle(void) {
 	assert(loss.result == 0u);
 	assert(loss.treasury_delta == 0); /* no salvage (spec-05 OQ1) */
 	assert(loss.units_after < loss.units_before || loss.units_after == loss.units_before);
-	printf("battle: CRIT front 9 turns -> defeat, losses in ledger\n");
+	printf("battle: CRIT front -> defeat, losses in ledger\n");
 
 	/* deploy gate: 0 companies is a blocked deploy, never a battle       */
 	sim_init(1u);
@@ -140,7 +140,7 @@ static battle_outcome_t run_battle(void) {
 
 	/* R4: Continue applies exactly once; the double press is idempotent  */
 	sim_init(1u);
-	ingest_full(400u, 12u, 6u, 4242u);
+	ingest_full(400u, 12u, 10u, 4242u);
 	assert(enqueue_cmd(4u, 3u));
 	dispatch_all();
 	while (sim_battle_active()) sim_battle_step();
@@ -159,9 +159,10 @@ static battle_outcome_t run_battle(void) {
 	assert(sim_snapshot()->day == (uint16_t)(pre_day + seal.day_delta));
 	printf("battle: Continue 1 apply; 2nd press idempotent\n");
 
-	/* R6: Retry = frame 0 of the same seed, 0 resource change            */
+	/* R6: Retry = tick 0 of the same seed, 0 resource change; South is
+	 * held and quiet now (ADR-0009), so the next march is on Core       */
 	const uint16_t deploy_roster = sim_roster(); /* the pre-battle state */
-	assert(enqueue_cmd(4u, 3u));
+	assert(enqueue_cmd(4u, 4u));
 	dispatch_all();
 	while (sim_battle_active()) sim_battle_step();
 	const battle_outcome_t seal2 = run_battle();
@@ -169,7 +170,7 @@ static battle_outcome_t run_battle(void) {
 	const uint32_t retry_treasury = sim_snapshot()->treasury;
 	assert(sim_result_retry() == SIM_OK);
 	assert(sim_battle_active() && !sim_battle_sealed());
-	assert(sim_battle_turn() == 0u);
+	assert(sim_battle_time() == 0u);
 	assert(sim_snapshot()->treasury == retry_treasury); /* 0 change     */
 	assert(sim_roster() == deploy_roster); /* the fallen come back     */
 	/* determinism across the restart: attempt 2 == attempt 1 byte-exact  */

@@ -1,11 +1,12 @@
-/* test_battle_flow.c - B22 + B23 (spec-04 T026-T030, T032-T033).
- * B22: the order panel holds the tick and the step (10 s open = 0 ticks,
- *      0 steps, 0 catch-up), BattleEnded in 1 frame, 1 save op per
- *      battle end, resume always at turn 1 (mid-turn state refused), the
- *      five written states reachable.
- * B23: 100 battles with one order script share the golden hash (and the
- *      checked-in baseline), and a no-touch run reaches the 4 orders +
- *      End turn + Undo + speed + the HP handle through battle_input.
+/* test_battle_flow.c - B22 + B23 (spec-04 T026-T030, T032-T033), real
+ * time per ADR-0008.
+ * B22: the order panel and the pause hold the tick and the field (10 s
+ *      open = 0 ticks, 0 catch-up), BattleEnded in 1 frame, 1 save op per
+ *      battle end, a battle always starts at tick 0 (mid-battle state
+ *      refused), the five written states reachable.
+ * B23: 100 battles with one stance script share the golden hash (and the
+ *      checked-in baseline), and a no-touch run reaches the 4 stances +
+ *      Undo + Pause + speed + the HP handle through battle_input.
  * The loop gate is mirrored from loop.c (loop is not host-linked): hold
  * -> run mode 0 and no battle step, exactly what loop_start() does.
  */
@@ -70,16 +71,12 @@ static void loop_frame(void) {
 		sim_set_run_mode(modes);
 		const uint8_t subs = sim_speed();
 		sim_step(subs);
-		static uint8_t turn_ticks;
 		if (screen == UI_SCREEN_BATTLE && !hold) {
 			for (uint8_t s = 0u; s < subs; ++s) {
 				if (!sim_battle_active() || sim_battle_sealed()) {
 					break;
 				}
-				if (++turn_ticks >= SIM_BATTLE_TICKS_PER_TURN) {
-					turn_ticks = 0u;
-					sim_battle_step();
-				}
+				sim_battle_step();
 			}
 		}
 	}
@@ -121,20 +118,22 @@ static uint32_t fnv(uint32_t h, const void *p, size_t n) {
 	return h;
 }
 
-/* one scripted battle: the same orders at the same turns, every run   */
+/* one scripted battle: the same stances at the same ticks, every run */
 static uint32_t scripted_battle(uint8_t front) {
 	stage(front, 10u);
 	static const uint8_t SCRIPT[] = {SIM_ORDER_ADVANCE, SIM_ORDER_HOLD,
 	                                 SIM_ORDER_FLANK, SIM_ORDER_FALLBACK};
 	uint32_t h = 0x811C9DC5u;
 	uint32_t seq = 5000u;
-	for (int t = 0; t < (int)SIM_BATTLE_TURNS && !sim_battle_sealed(); ++t) {
-		sim_cmd_t c;
-		memset(&c, 0, sizeof c);
-		c.seq = ++seq;
-		c.cmd = 7u;
-		c.arg = SCRIPT[t % 4];
-		(void)sim_apply(&c);
+	for (int t = 0; !sim_battle_sealed(); ++t) {
+		if (t % 150 == 0) { /* a new stance every 15 s                */
+			sim_cmd_t c;
+			memset(&c, 0, sizeof c);
+			c.seq = ++seq;
+			c.cmd = 7u;
+			c.arg = SCRIPT[(t / 150) % 4];
+			(void)sim_apply(&c);
+		}
 		sim_battle_step();
 		const uint16_t sh = sim_battle_state_hash();
 		h = fnv(h, &sh, sizeof sh);
@@ -159,22 +158,22 @@ int main(int argc, char **argv) {
 		key(KEY_X);
 		assert(battle_holds());
 		const uint32_t ticks = sim_tick();
-		const uint8_t turn = sim_battle_turn();
+		const uint16_t field = sim_battle_time();
 		for (int i = 0; i < 600; ++i) {
 			loop_frame();
 		}
 		assert(sim_tick() == ticks);
-		assert(sim_battle_turn() == turn);
-		/* orders wait for the panel: a d-pad press enqueues nothing    */
-		key(KEY_UP);
-		assert(sim_orders_pending() == 0u);
+		assert(sim_battle_time() == field);
+		/* orders wait for the panel: a d-pad press changes nothing     */
+		key(KEY_DOWN);
+		assert(sim_battle_stance() == SIM_ORDER_ADVANCE);
 		key(KEY_X);
 		assert(!battle_holds());
 		for (int i = 0; i < 5; ++i) {
 			loop_frame(); /* 6 frames since the close = one 10 Hz tick */
 		}
 		assert(sim_tick() == ticks + 1u); /* resumes at +1, no catch-up */
-		printf("battle: panel open 600 frames -> +0 ticks, +0 turns; close -> +1 tick\n");
+		printf("battle: panel open 600 frames -> +0 ticks, +0 field; close -> +1 tick\n");
 	}
 
 	/* B22 T027: BattleEnded in 1 frame - the sealing step seals.          */
@@ -221,18 +220,19 @@ int main(int argc, char **argv) {
 		agg.reserved[3] = 1u; /* the in-battle marker                  */
 		sim_ingest_save(&agg, 5u);
 		assert(sim_ingest_rejected_midturn());
-		assert(!sim_battle_active() && sim_battle_turn() == 0u);
+		assert(!sim_battle_active() && sim_battle_time() == 0u);
 		sim_cmd_t d;
 		memset(&d, 0, sizeof d);
 		d.cmd = 4u;
 		d.arg = 1u;
 		assert(sim_apply(&d) == SIM_OK);
+		assert(sim_battle_time() == 0u);
 		sim_battle_step();
-		assert(sim_battle_turn() == 1u);
+		assert(sim_battle_time() == 1u);
 		save_aggregate_t out;
 		sim_export_aggregate(&out);
 		assert(out.reserved[3] == 0u); /* battle state never persists */
-		printf("battle: mid-turn record refused; resume starts at turn 1\n");
+		printf("battle: mid-battle record refused; a deploy starts at tick 0\n");
 	}
 
 	/* B22 T030: the five written states.                                 */
@@ -244,33 +244,22 @@ int main(int argc, char **argv) {
 		stage(3u, 10u);
 		seen[battle_state_id()] = true; /* Loading                        */
 		assert(strstr(battle_state_copy(), "Deploying 10 companies") != NULL);
-		for (int i = 0; i < 33; ++i) {
-			sim_cmd_t c;
-			memset(&c, 0, sizeof c);
-			c.seq = 7000u + (uint32_t)i;
-			c.cmd = 7u;
-			c.arg = SIM_ORDER_HOLD;
-			(void)sim_apply(&c);
-		}
-		seen[battle_state_id()] = true; /* Error: the 33rd order          */
-		stage(3u, 10u);
-		{
-			sim_cmd_t c;
-			memset(&c, 0, sizeof c);
-			c.seq = 7100u;
-			c.cmd = 7u;
-			c.arg = SIM_ORDER_HOLD;
-			assert(sim_apply(&c) == SIM_OK);
-			sim_battle_step();
-		}
+		sim_battle_step();
 		seen[battle_state_id()] = true; /* Success: all standing          */
 		{
 			sim_cmd_t c;
 			memset(&c, 0, sizeof c);
-			c.seq = 7101u;
-			c.cmd = 7u;
-			c.arg = SIM_ORDER_FLANK; /* forces one own loss            */
+			c.seq = 7100u;
+			c.cmd = 10u;
+			c.arg = SIM_ABILITY_CHARGE;
 			assert(sim_apply(&c) == SIM_OK);
+			c.seq = 7101u; /* the second charge: still cooling down  */
+			assert(sim_apply(&c) == SIM_BAD_ARG);
+		}
+		seen[battle_state_id()] = true; /* Error: "Charge ready in 30 s." */
+		assert(strstr(battle_state_copy(), "ready in") != NULL);
+		stage(1u, 10u); /* East: a front that costs companies           */
+		while (sim_battle_active() && sim_battle_units() == sim_battle_units_start()) {
 			sim_battle_step();
 		}
 		seen[battle_state_id()] = true; /* Partial: N of M standing       */
@@ -311,38 +300,53 @@ int main(int argc, char **argv) {
 		printf("battle: 100/100 scripted battles -> golden %08x == baseline\n", ref);
 	}
 
-	/* B23 T033: a no-touch run - 4 orders, Undo, speed, HP handle, End. */
-	stage(2u, 10u);
+	/* B23 T033: a no-touch run - 4 stances, Undo, speed, panel, Pause. */
+	stage(3u, 10u);
 	{
-		key(KEY_UP);
-		assert(sim_orders_pending() == 1u && sim_order_at(0u) == SIM_ORDER_ADVANCE);
 		key(KEY_LEFT);
+		assert(sim_battle_stance() == SIM_ORDER_HOLD);
 		key(KEY_RIGHT);
+		assert(sim_battle_stance() == SIM_ORDER_FLANK);
 		key(KEY_DOWN);
-		assert(sim_orders_pending() == 4u);
-		assert(sim_order_at(1u) == SIM_ORDER_HOLD);
-		assert(sim_order_at(2u) == SIM_ORDER_FLANK);
-		assert(sim_order_at(3u) == SIM_ORDER_FALLBACK);
-		key(KEY_B); /* one-tap undo: back to the pre-FALLBACK world   */
-		assert(sim_orders_pending() == 3u);
-		assert(strcmp(sim_order_status(), "Undo: pre-order restored.") == 0);
+		assert(sim_battle_stance() == SIM_ORDER_FALLBACK);
+		key(KEY_B); /* one-tap undo: back to Flank                    */
+		assert(sim_battle_stance() == SIM_ORDER_FLANK);
+		assert(strcmp(sim_order_status(), "Undo: Flank again.") == 0);
+		key(KEY_UP);
+		assert(sim_battle_stance() == SIM_ORDER_ADVANCE);
 		key(KEY_R);
 		assert(sim_speed() == SIM_SPEED_X2 && strcmp(sim_speed_badge(), "x2") == 0);
+		key(KEY_R);
+		assert(sim_speed() == SIM_SPEED_X4);
 		key(KEY_X); /* the HP handle opens the order panel            */
 		assert(battle_holds());
 		key(KEY_X);
 		assert(!battle_holds());
-		key(KEY_A); /* End turn: commit flushes, undo closes          */
-		assert(sim_orders_pending() == 0u && !sim_undo_armed());
-		assert(strcmp(sim_order_status(), "Turn committed, undo closed.") == 0);
+		key(KEY_A); /* Pause: the field holds                         */
+		assert(battle_holds());
+		const uint16_t t0 = sim_battle_time();
+		for (int i = 0; i < 120; ++i) {
+			loop_frame();
+		}
+		assert(sim_battle_time() == t0);
+		key(KEY_A); /* resume                                          */
+		assert(!battle_holds());
 		int frames = 0;
-		while (!sim_battle_sealed() && frames < 60 * 60) {
+		while (!sim_battle_sealed() && frames < 60 * 60 * 3) {
 			loop_frame();
 			++frames;
 		}
 		assert(sim_battle_sealed());
-		printf("battle: no-touch run - 4 orders, undo, x2, panel, End turn -> "
+		printf("battle: no-touch run - 4 stances, undo, x4, panel, pause -> "
 		       "sealed in %d frames, 0 dead ends\n", frames);
+		/* GAME_DESIGN 7: losses read on the field - every company that
+		 * fell left its dead on the ground the view drew            */
+		extern uint32_t render_stub_fallen;
+		assert(sim_battle_units() < sim_battle_units_start());
+		assert(render_stub_fallen > 0u);
+		printf("battle: %u companies fell -> the fallen drawn %lu times\n",
+		       (unsigned)(sim_battle_units_start() - sim_battle_units()),
+		       (unsigned long)render_stub_fallen);
 	}
 
 	printf("B22+B23 battle flow host tests passed.\n");

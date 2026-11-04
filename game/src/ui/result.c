@@ -95,15 +95,32 @@ static const ui_row_t RESULT_ROWS[] = {
 	{8, RENDER_BOTTOM, 14, 132, 104, 3, RENDER_INK2},
 };
 
+/* what the battle did to the front (ADR-0009): won, held against a
+ * threat, still in danger, or still the foe's                           */
+static const char *front_word(const battle_outcome_t *o, bool defeat) {
+	const uint8_t k = sim_battle_kind();
+	const bool defence = k != SIM_WAR_CONQUEST && k != SIM_WAR_RECONQUEST;
+	if (!defeat) {
+		return defence ? "DEFENDED" : "TAKEN";
+	}
+	if (defence) {
+		return sim_front_taken(o->province_id) ? "IN DANGER" : "LOST";
+	}
+	return "HELD";
+}
+
 static void paint(const battle_outcome_t *o, bool defeat, bool applied,
                   int focused) {
 	char buf[48];
 	const front_art_t *a = front_art(o->province_id);
 	const sim_province_record_t *tab = sim_province_table(NULL);
 	const uint32_t step = ui_anim_step();
+	/* the god fought here: the front's own, or the one a wrath brought */
+	const uint8_t boss = sim_battle_boss();
+	const uint8_t god = (boss < SIM_BOSSES) ? boss : (uint8_t)RENDER_GOD_NONE;
 
 	/* top: the field it was fought on, the survivors standing          */
-	render_backdrop(RENDER_TOP, a->map, a->god);
+	render_backdrop(RENDER_TOP, a->map, god);
 	render_camera(130, 150);
 	for (int i = 0; i < o->units_after && i < 16; ++i) {
 		render_squad(RENDER_CIV_HELLENES, RENDER_CLS_SPEAR, 0u,
@@ -116,13 +133,13 @@ static void paint(const battle_outcome_t *o, bool defeat, bool applied,
 			             step + (uint32_t)i, 150 + (i % 4) * 34,
 			             50 + (i / 4) * 16, RENDER_SPR_FLIP);
 		}
-		if (a->god != RENDER_GOD_NONE) {
-			render_god(a->god, RENDER_GOD_IDLE, step, 120, 0,
+		if (god != RENDER_GOD_NONE) {
+			render_god(god, RENDER_GOD_IDLE, step, 120, 0,
 			           RENDER_SPR_FLIP);
 		}
-	} else if (a->god != RENDER_GOD_NONE) {
+	} else if (god != RENDER_GOD_NONE) {
 		/* the god's fall, frozen on its last frame                  */
-		render_god(a->god, RENDER_GOD_DEATH,
+		render_god(god, RENDER_GOD_DEATH,
 		           render_god_frames(RENDER_GOD_DEATH) - 1u, 120, 0,
 		           RENDER_SPR_FLIP);
 	}
@@ -133,17 +150,20 @@ static void paint(const battle_outcome_t *o, bool defeat, bool applied,
 	                defeat ? "DEFEAT" : "VICTORY");
 	render_text(RENDER_TOP, 112, 138, RENDER_LINE, tab[o->province_id].name);
 	save_row_paint(RENDER_TOP, SAVE_ROW_RESULT, 16, 156, 224);
-	if (!defeat && a->god != RENDER_GOD_NONE) {
-		render_relic(RENDER_TOP, a->god, 224, 134, RENDER_SPR_FRONT);
+	if (!defeat && god != RENDER_GOD_NONE) {
+		render_relic(RENDER_TOP, god, 224, 134, RENDER_SPR_FRONT);
 	}
 
 	/* bottom: the Order Sheet                                          */
 	render_backdrop(RENDER_BOTTOM, defeat ? RENDER_BD_RESULT_LOSS
 	                                      : RENDER_BD_RESULT_WIN,
 	                RENDER_GOD_NONE);
-	snprintf(buf, sizeof buf, "Day %u, turn %u of %u",
-	         (unsigned)sim_snapshot()->day, (unsigned)o->day_delta,
-	         (unsigned)sim_battle_turn_cap());
+	{
+		const unsigned s = sim_battle_time() / SIM_BATTLE_HZ;
+		snprintf(buf, sizeof buf, "Day %u, %u:%02u of battle. %s",
+		         (unsigned)sim_snapshot()->day, s / 60u, s % 60u,
+		         sim_war_name(sim_battle_kind()));
+	}
 	render_text(RENDER_BOTTOM, 14, 24, RENDER_INK2, buf);
 	const unsigned lost = sim_battle_losses();
 	struct { uint8_t icon; const char *label; char val[16]; uint8_t col; } rows[4];
@@ -157,8 +177,7 @@ static void paint(const battle_outcome_t *o, bool defeat, bool applied,
 	rows[1].col = lost ? RENDER_CRIT : RENDER_INK;
 	rows[2].icon = RENDER_ICON_BATTLE;
 	rows[2].label = "Front";
-	snprintf(rows[2].val, sizeof rows[2].val, "%s",
-	         sim_front_taken(o->province_id) || !defeat ? "TAKEN" : "HELD");
+	snprintf(rows[2].val, sizeof rows[2].val, "%s", front_word(o, defeat));
 	rows[2].col = RENDER_INK;
 	rows[3].icon = RENDER_ICON_TIER;
 	rows[3].label = "Front tier";
@@ -175,7 +194,6 @@ static void paint(const battle_outcome_t *o, bool defeat, bool applied,
 	/* GAME_DESIGN 8: a god's fall pays a permanent relic - name it and
 	 * what it does, so the reward is felt, not just counted           */
 	{
-		const uint8_t boss = sim_front_boss(o->province_id);
 		if (!defeat && boss != SIM_BOSS_NONE) {
 			char rb[48];
 			render_relic(RENDER_BOTTOM, boss, 14, 134, RENDER_SPR_FRONT);
@@ -258,8 +276,7 @@ void result_frame(void) {
 	         (unsigned)o->units_before);
 	ui_draw_text(0, 4, line);
 	snprintf(line, sizeof line, "FRONT %-11s (Campaign)  %s",
-	         tab[o->province_id].name,
-	         sim_front_taken(o->province_id) ? "TAKEN" : "HELD");
+	         tab[o->province_id].name, front_word(o, defeat));
 	ui_draw_text(0, 5, line);
 	snprintf(line, sizeof line, "TIER      (Base)      %u > %u",
 	         (unsigned)o->tier_before, (unsigned)o->tier_after);

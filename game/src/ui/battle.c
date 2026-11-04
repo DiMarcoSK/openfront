@@ -1,12 +1,14 @@
 /* battle.c - top battlefield + bottom command panel (B10, spec-04 R1-R12).
- * B20 speed, B21 orders + one-tap undo, B22 the order panel (HP expand
- * with tick + step hold, 0 catch-up), the five written states and the
- * art pass: the high camera over the front's 512x512 field, both lines
- * as squads (12 men per sprite) thinning with the sim's counts, the god
- * of a divine front with its attack effect, the live minimap, and the
- * boss intro (stage on top, card below, <= 2 s, once per deploy).
- * The copy rows stay the semantic channel (host tests); the sealed frame
- * is never redrawn (R11) - ui.c switches to Result in <= 1 frame.
+ * ADR-0008: the battle runs in real time. The top screen is the field the
+ * sim moves - every division at its own x and lane, marching, wheeling
+ * round a wing, fighting, shooting or running - under the high camera
+ * that follows the clash; the god of a divine front stands behind its
+ * host. The bottom screen commands: four stances (d-pad == taps), Undo,
+ * Pause, speed, the general's Rally / Charge, the live minimap, morale,
+ * flanks and the god's countdown. The order panel and the pause hold the
+ * field (0 ticks while open). The copy rows stay the semantic channel
+ * (host tests); the sealed frame is never redrawn (R11) - ui.c switches
+ * to Result in <= 1 frame.
  */
 #include <nds.h>
 #include <stdio.h>
@@ -20,25 +22,35 @@
 
 #include "ui_draw.h"
 #include "screens.h"
+#include "strings.h"
 
-/* B21: the last touch target ("ring armed" pattern for the dangerous
- * End-turn bar; orders/undo/speed are direct taps) + the conduit seq
- * stamp for order/commit/undo commands.                                  */
-static int last_touch = -1;
 static uint32_t order_seq_stamp;
 
-/* B22: the reading surfaces. Both hold the tick and the battle step.    */
+/* B22: the reading surfaces. All three hold the tick and the field.    */
 static bool panel_open;
+static bool paused;
 static int intro_frames;           /* > 0 while the boss intro plays     */
 #define INTRO_FRAMES 120           /* 2 s at 60 Hz (B30: <= 2 s)          */
 
-/* the view's memory of the sim counts, to animate the deltas            */
-static uint8_t seen_units, seen_enemies, seen_turn;
+/* the view's memory of the sim, to animate what changed               */
 static int god_anim, god_step, god_timer;
 static int fx_frame = -1, fx_x, fx_y;
 static int flash;
-static int line_x = 256;           /* map x of the front line            */
 static int cam_x = 128;
+
+/* the ground and the fallen (GAME_DESIGN 4/7): every squad, corpse and
+ * general stands on its lane's path round rock and water (render reads
+ * art_terrain.h); a company that falls leaves its dead where it fell -
+ * struck, falling, down - so losses read on the field, not only in a bar */
+#define FALLEN_MAX 32
+typedef struct {
+	int16_t x, y;            /* map px: block centre, sprite top row    */
+	uint8_t civ, cls, flip, age;
+} fallen_t;
+static fallen_t fallen[FALLEN_MAX];
+static uint8_t fallen_next, fallen_count;
+static uint8_t seen_companies[2][SIM_DIVISIONS];
+static uint8_t field_map = RENDER_BD_MAP_PLAINS;
 
 /* GAME_DESIGN 7 contextual alerts: each new sim event shows once on the
  * top plate for 2 s with the alert cue; the field acts it out.          */
@@ -48,26 +60,41 @@ static int alert_frames;
 static uint8_t alert_event;
 
 bool battle_holds(void) {
-	return panel_open || intro_frames > 0;
+	return panel_open || paused || intro_frames > 0;
+}
+
+/* the god on this field: a front's own, or the one a wrath brought     */
+static uint8_t battle_god(void) {
+	const uint8_t b = sim_battle_boss();
+	return (b < SIM_BOSSES) ? b : (uint8_t)RENDER_GOD_NONE;
+}
+
+/* the host across the field: rebels wear our own colours              */
+static uint8_t foe_civ(const front_art_t *a) {
+	return sim_battle_kind() == SIM_WAR_REBELLION ? (uint8_t)RENDER_CIV_HELLENES : a->enemy;
 }
 
 void battle_enter(bool intro) {
-	const front_art_t *a = front_art(sim_battle_province());
-	intro_frames = (intro && a->god != RENDER_GOD_NONE) ? INTRO_FRAMES : 0;
+	intro_frames = (intro && battle_god() != RENDER_GOD_NONE) ? INTRO_FRAMES : 0;
 	panel_open = false;
-	last_touch = -1;
-	seen_units = sim_battle_units();
-	seen_enemies = sim_battle_enemies();
-	seen_turn = 0u;
+	paused = false;
 	god_anim = RENDER_GOD_WALK;
 	god_step = god_timer = 0;
 	fx_frame = -1;
 	flash = 0;
-	line_x = 256;
-	cam_x = line_x - 128;
+	cam_x = 128;
 	seen_event_seq = sim_battle_event_seq();
 	alert_frames = 0;
 	alert_event = SIM_EVT_NONE;
+	fallen_next = fallen_count = 0u;
+	for (uint8_t side = 0; side < 2u; ++side) {
+		uint8_t n = 0u;
+		const sim_division_t *d = sim_battle_divisions(side, &n);
+		memset(seen_companies[side], 0, sizeof seen_companies[side]);
+		for (uint8_t i = 0; i < n && i < SIM_DIVISIONS; ++i) {
+			seen_companies[side][i] = d[i].companies;
+		}
+	}
 }
 
 /* ---- the five written states (spec-04 T030) ----------------------------- */
@@ -80,11 +107,11 @@ uint8_t battle_state_id(void) {
 	if (!sim_battle_active() && !sim_battle_sealed()) {
 		return BST_EMPTY;
 	}
-	if (sim_battle_turn() == 0u && sim_orders_pending() == 0u) {
+	if (sim_battle_time() == 0u) {
 		return BST_LOADING;
 	}
 	const char *st = sim_order_status();
-	if (st != NULL && (strstr(st, "not queued") || strstr(st, "need"))) {
+	if (st != NULL && (strstr(st, "ready in") || strstr(st, "need"))) {
 		return BST_ERROR;
 	}
 	if (sim_battle_units() < sim_battle_units_start()) {
@@ -99,7 +126,7 @@ const char *battle_state_copy(void) {
 	case BST_EMPTY:
 		return "No battle running. Deploy from Base.";
 	case BST_LOADING:
-		snprintf(copy, sizeof copy, "Deploying %u companies. Turn 1 next.",
+		snprintf(copy, sizeof copy, "Deploying %u companies. The lines advance.",
 		         (unsigned)sim_battle_units());
 		return copy;
 	case BST_ERROR:
@@ -116,11 +143,17 @@ const char *battle_state_copy(void) {
 	}
 }
 
+/* mm:ss of field time                                                   */
+static void clock_text(char *buf, size_t n, uint16_t ticks) {
+	const unsigned s = ticks / SIM_BATTLE_HZ;
+	snprintf(buf, n, "%u:%02u", s / 60u, s % 60u);
+}
+
 /* B21 (T020): the bottom hit map on the command panel art:
  * header speed chip (py < 22, px >= 184), minimap = order panel toggle
- * (px < 132), 2x2 order tiles at x 134/194, y 26/60 (58 x 30), End-turn
- * bar y 94..117 (TWO-TAP commit), Undo chip y 120..139 x < 194, speed
- * chip x >= 194, the general's Rally / Charge y 140..159 (8 / 9).
+ * (px < 132), 2x2 stance tiles at x 134/194, y 26/60 (58 x 30), the
+ * Pause bar y 94..117, Undo chip y 120..139 x < 194, speed chip x >= 194,
+ * the general's Rally / Charge y 140..159 (8 / 9).
  * -1 = outside (tap ignored, input preserved).                          */
 static int touch_target(uint32_t value) {
 	const uint32_t px = (value >> 8) & 0xFFu;
@@ -140,7 +173,7 @@ static int touch_target(uint32_t value) {
 		return (int)(row * 2u + col); /* ADV FLK / HOL FAL */
 	}
 	if (py < 118u) {
-		return 4; /* End-turn bar: two-tap commit                    */
+		return 4; /* the Pause bar                                     */
 	}
 	if (py < 140u) {
 		return (px < 194u) ? 5 : 6;
@@ -166,7 +199,7 @@ static void cycle_speed(void) {
 	audio_cue(AUDIO_CUE_SPEED); /* id only, drop if unavailable          */
 }
 
-/* tile index (touch order) -> sim order                                  */
+/* tile index (touch order) -> stance                                     */
 static const uint8_t TILE_ORDER[4] = {
 	SIM_ORDER_ADVANCE, SIM_ORDER_FLANK, SIM_ORDER_HOLD, SIM_ORDER_FALLBACK,
 };
@@ -180,8 +213,8 @@ void battle_input(uint8_t kind, uint32_t value) {
 		}
 		return;
 	}
-	/* B21 touch direct-select: orders/undo/speed are one tap; the
-	 * dangerous End-turn commit needs two taps on the same target.      */
+	/* touch direct-select: every target is one tap; nothing on this
+	 * panel is irreversible (a stance has Undo, a pause resumes).       */
 	if (kind == (uint8_t)UI_EVT_TOUCH) {
 		const int t = touch_target(value);
 		if (t < 0) {
@@ -189,7 +222,10 @@ void battle_input(uint8_t kind, uint32_t value) {
 		}
 		if (t == 7) {
 			panel_open = !panel_open; /* B22: HP tap-expand         */
-			last_touch = -1;
+			return;
+		}
+		if (t == 4) {
+			paused = !paused;
 			return;
 		}
 		if (panel_open) {
@@ -197,47 +233,29 @@ void battle_input(uint8_t kind, uint32_t value) {
 		}
 		if (t <= 3) {
 			send_cmd(7u, TILE_ORDER[t]);
-			last_touch = -1;
-			return;
-		}
-		if (t == 5) {
+		} else if (t == 5) {
 			send_cmd(9u, 0u);
-			last_touch = -1;
-			return;
-		}
-		if (t == 6) {
+		} else if (t == 6) {
 			cycle_speed();
-			last_touch = -1;
-			return;
-		}
-		if (t == 8 || t == 9) {
-			send_cmd(10u, t == 8 ? SIM_ABILITY_RALLY : SIM_ABILITY_CHARGE);
-			last_touch = -1;
-			return;
-		}
-		/* t == 4: two-tap End turn (undo closes at commit)          */
-		if (t == last_touch) {
-			last_touch = -1;
-			send_cmd(8u, 0u);
 		} else {
-			last_touch = 4;
+			send_cmd(10u, t == 8 ? SIM_ABILITY_RALLY : SIM_ABILITY_CHARGE);
 		}
 		return;
 	}
 	if (kind != (uint8_t)UI_EVT_KEY) {
 		return;
 	}
-	/* B21 (T020/T023): D-pad raises an order, A commits (End turn),
-	 * B undoes the last order (single-level), R cycles speed (B20),
-	 * X opens/closes the order panel (B22, the HP handle), Y rallies and
- * L charges (the general, GAME_DESIGN 7). All four
-	 * order paths reuse the same handler for full d-pad/touch parity.
-	 * Orders land only in a live battle; the sim acks (<= 16.7 ms
-	 * inline) and the strip copies.                                     */
-	last_touch = -1;
+	/* D-pad sets the stance, A pauses, B undoes the last stance, R
+	 * cycles speed (B20), X opens/closes the order panel (B22, the HP
+	 * handle), Y rallies and L charges (the general, GAME_DESIGN 7).
+	 * Every path reuses the touch handler's commands (full parity).    */
 	const uint32_t keys = value;
 	if (keys & KEY_X) {
 		panel_open = !panel_open;
+		return;
+	}
+	if (keys & KEY_A) {
+		paused = !paused;
 		return;
 	}
 	if (panel_open) {
@@ -246,44 +264,31 @@ void battle_input(uint8_t kind, uint32_t value) {
 		}
 		return;
 	}
-	uint8_t order;
 	if (keys & KEY_UP) {
-		order = SIM_ORDER_ADVANCE;
+		send_cmd(7u, SIM_ORDER_ADVANCE);
 	} else if (keys & KEY_LEFT) {
-		order = SIM_ORDER_HOLD;
+		send_cmd(7u, SIM_ORDER_HOLD);
 	} else if (keys & KEY_RIGHT) {
-		order = SIM_ORDER_FLANK;
+		send_cmd(7u, SIM_ORDER_FLANK);
 	} else if (keys & KEY_DOWN) {
-		order = SIM_ORDER_FALLBACK;
-	} else if (keys & KEY_A) {
-		/* End turn = the T024 commit: flush, close undo, 2 s copy.  */
-		send_cmd(8u, 0u);
-		return;
+		send_cmd(7u, SIM_ORDER_FALLBACK);
 	} else if (keys & KEY_B) {
 		send_cmd(9u, 0u);
-		return;
 	} else if (keys & KEY_R) {
 		cycle_speed();
-		return;
 	} else if (keys & (KEY_Y | KEY_L)) {
 		send_cmd(10u, (keys & KEY_Y) ? SIM_ABILITY_RALLY : SIM_ABILITY_CHARGE);
-		return;
-	} else {
-		return;
 	}
-	send_cmd(7u, order);
 }
 
 /* ---- art: the field ------------------------------------------------------- */
-#define FIELD_Y 200  /* map y of the line's top rank                      */
 #define CAM_Y 150    /* the high camera's fixed tilt over the field      */
-#define MAX_OURS 32  /* 8 ranks x 4 files of squads                      */
-#define MAX_FOES 24
+static const int LANE_Y[SIM_LANES] = {186, 228, 270};
+static const uint8_t SPRITE_CLS[3] = {
+	RENDER_CLS_SPEAR, RENDER_CLS_ARCHER, RENDER_CLS_CAVALRY,
+};
 
-static int squad_x_player(int i) { return line_x - 40 - (i % 4) * 34 - (i / 4 % 2) * 8; }
-static int squad_y(int i) { return FIELD_Y + (i / 4) * 16; }
-
-static void god_tick(const front_art_t *a, bool advance) {
+static void god_tick(uint8_t god, int gx, bool advance) {
 	if (!advance) {
 		return;
 	}
@@ -301,9 +306,9 @@ static void god_tick(const front_art_t *a, bool advance) {
 	case RENDER_GOD_SPECIAL:
 		if (god_step == 3) {
 			fx_frame = 0;
-			fx_x = line_x - 110;
-			fx_y = FIELD_Y + 10;
-			if (a->god == RENDER_GOD_ZEUS) {
+			fx_x = gx - 120;
+			fx_y = LANE_Y[SIM_LANE_CENTRE] - 20;
+			if (god == RENDER_GOD_ZEUS) {
 				flash = 10; /* the keraunos lights the field    */
 			}
 		}
@@ -335,9 +340,10 @@ static uint8_t alert_color(uint8_t evt) {
 	switch (evt) {
 	case SIM_EVT_BOSS_OMEN:
 	case SIM_EVT_WAVERING:
+	case SIM_EVT_CAV_CHARGE:
 		return RENDER_WARN_L;
 	case SIM_EVT_FLANK_BROKEN:
-	case SIM_EVT_CAV_CHARGE:
+	case SIM_EVT_AMBUSH:
 	case SIM_EVT_BOSS_STRIKE:
 	case SIM_EVT_BOSS_PHASE:
 	case SIM_EVT_COLLAPSE:
@@ -348,7 +354,7 @@ static uint8_t alert_color(uint8_t evt) {
 }
 
 /* a new sim event: cue it, and let the field act it out                */
-static void alert_take(const front_art_t *a) {
+static void alert_take(uint8_t god) {
 	if (sim_battle_event_seq() == seen_event_seq) {
 		return;
 	}
@@ -357,140 +363,233 @@ static void alert_take(const front_art_t *a) {
 	alert_frames = ALERT_FRAMES;
 	audio_cue(alert_color(alert_event) == RENDER_ACCENT_L ? AUDIO_CUE_CONFIRM
 	                                                    : AUDIO_CUE_ALERT);
-	if (a->god != RENDER_GOD_NONE &&
+	if (god != RENDER_GOD_NONE &&
 	    (alert_event == SIM_EVT_BOSS_STRIKE || alert_event == SIM_EVT_BOSS_OMEN ||
 	     alert_event == SIM_EVT_BOSS_PHASE)) {
 		god_anim = RENDER_GOD_SPECIAL; /* the god casts it            */
 		god_step = god_timer = 0;
+	} else if (god != RENDER_GOD_NONE && alert_event == SIM_EVT_BOSS_COUNTERED) {
+		god_anim = RENDER_GOD_HURT;
+		god_step = god_timer = 0;
 	}
-	if (a->god == RENDER_GOD_ZEUS && alert_event == SIM_EVT_BOSS_STRIKE) {
+	if (god == RENDER_GOD_ZEUS && alert_event == SIM_EVT_BOSS_STRIKE) {
 		flash = 12; /* the thunderbolt lands                            */
 	}
+}
+
+/* the row a lane walks at map x: bent round rock and water           */
+static int lane_y(uint8_t lane, int x) {
+	lane %= SIM_LANES;
+	return LANE_Y[lane] + render_lane_dy(field_map, lane, x);
+}
+
+/* a division is drawn inside the ground its lane can walk: a mountain
+ * wall or the arena chasm stops the picture where the field ends       */
+static int lane_clamp(uint8_t lane, int x, int margin) {
+	int x0, x1;
+	render_lane_span(field_map, lane % SIM_LANES, &x0, &x1);
+	return x < x0 + margin ? x0 + margin : x > x1 - margin ? x1 - margin : x;
+}
+
+static bool lane_past_end(uint8_t lane, int x) {
+	int x0, x1;
+	render_lane_span(field_map, lane % SIM_LANES, &x0, &x1);
+	return x < x0 || x > x1;
+}
+
+/* the blocks a division mustered as - fixed for the battle, so losses
+ * thin the blocks instead of quietly removing them                     */
+static int blocks_for(const sim_division_t *d, int cap) {
+	const unsigned c = d->companies_start;
+	const int n = c >= 6u ? 3 : c >= 3u ? 2 : 1;
+	return n > cap ? cap : n;
+}
+
+/* men still up in a division drawn as k blocks of 12                   */
+static int men_up(const sim_division_t *d, int k) {
+	if (d->companies_start == 0u || d->companies == 0u) {
+		return 0;
+	}
+	const unsigned start = d->companies_start;
+	return (int)((12u * (unsigned)k * d->companies + start - 1u) / start);
+}
+
+/* the art strength of block j (front first): 12/9/6/3 men, -1 = gone   */
+static int block_strength(int men, int j) {
+	const int left = men - 12 * j;
+	return left <= 0 ? -1 : left >= 12 ? 0 : left >= 9 ? 1 : left >= 6 ? 2 : 3;
+}
+
+static uint8_t div_anim(const sim_division_t *d) {
+	switch (d->state) {
+	case SIM_DIV_FIGHT:
+	case SIM_DIV_SHOOT: return RENDER_ANIM_ATTACK;
+	case SIM_DIV_HOLD:  return RENDER_ANIM_IDLE;
+	default:            return RENDER_ANIM_WALK;
+	}
+}
+
+static void fall(int x, int y, uint8_t civ, uint8_t cls, uint8_t flip) {
+	fallen_t *f = &fallen[fallen_next];
+	/* no two heaps quite alike: a few px of scatter per body           */
+	f->x = (int16_t)(x + (int)(fallen_next * 7u % 9u) - 4);
+	f->y = (int16_t)(y + (int)(fallen_next * 5u % 5u) - 2);
+	f->civ = civ;
+	f->cls = cls;
+	f->flip = flip;
+	f->age = 0u;
+	fallen_next = (uint8_t)((fallen_next + 1u) % FALLEN_MAX);
+	if (fallen_count < FALLEN_MAX) {
+		fallen_count++;
+	}
+}
+
+/* one side's divisions: blocks of 12 at the division's x on its lane's
+ * path; every company lost since the last frame drops where it stood   */
+static void paint_side(uint8_t side, uint8_t civ, uint32_t step, int cy) {
+	uint8_t n = 0u;
+	const sim_division_t *d = sim_battle_divisions(side, &n);
+	const int cap = (side == SIM_SIDE_OURS) ? 3 : 2;
+	const int face = (side == SIM_SIDE_OURS) ? 1 : -1;
+	const uint8_t flip = (side == SIM_SIDE_FOE) ? RENDER_SPR_FLIP : 0u;
+	for (uint8_t i = 0; i < n && i < SIM_DIVISIONS; ++i) {
+		const bool rout = d[i].state == SIM_DIV_ROUT;
+		const int k = blocks_for(&d[i], cap);
+		const int men = men_up(&d[i], k);
+		const uint8_t lane = d[i].lane % SIM_LANES;
+		/* blocks run back from the leading x: ours west, theirs east   */
+		const int dx = lane_clamp(lane, d[i].x, 16 + 12 * (k - 1));
+		const int jit = (int)(i % 3u) * 4 - 4;
+		/* the riders in a wheel ride between the lanes                */
+		int wheel = 0;
+		if (d[i].state == SIM_DIV_WHEEL) {
+			wheel = (lane == SIM_LANE_CENTRE) ? 0 : (lane == SIM_LANE_NORTH ? 20 : -20);
+		}
+		/* the fallen: a company down = a heap where the rear block was */
+		const uint8_t was = seen_companies[side][i];
+		const uint8_t now = d[i].companies;
+		/* tick 0 is the muster: the view may still hold the last
+		 * battle's numbers, and nobody has fallen yet                  */
+		if (now < was && !rout && sim_battle_time() > 0u &&
+		    !lane_past_end(lane, d[i].x)) {
+			const int j = men > 0 ? (men - 1) / 12 : 0;
+			const int bx = dx - 12 * j * face;
+			const int heaps = (was - now) > 2 ? 2 : (was - now);
+			for (int h = 0; h < heaps; ++h) {
+				fall(bx + h * 10 * face, lane_y(lane, bx) + jit + 2,
+				     civ, SPRITE_CLS[d[i].cls % 3u], flip);
+			}
+		}
+		seen_companies[side][i] = now;
+		if (d[i].state == SIM_DIV_DEAD || now == 0u ||
+		    (rout && lane_past_end(lane, d[i].x))) {
+			continue;
+		}
+		for (int s = 0; s < k; ++s) {
+			const int st = block_strength(men, s);
+			if (st < 0) {
+				break;
+			}
+			const int cx = dx - s * 12 * face;
+			const int y = lane_y(lane, cx) + jit + wheel + (s & 1) * 6;
+			render_squad(civ, SPRITE_CLS[d[i].cls % 3u], (uint8_t)st,
+			             div_anim(&d[i]), step + i * 3u + (uint32_t)s,
+			             cx - 16 - cam_x, y - cy, rout ? 0u : flip);
+		}
+		/* a division struck in the side or the rear wears a crit tick
+		 * (a shape, not only a colour: constitution 7)               */
+		if (d[i].flags & SIM_DIV_FLANKED) {
+			render_rect(RENDER_TOP, dx - cam_x - 2, lane_y(lane, dx) + jit - cy - 6, 5, 5,
+			            RENDER_CRIT_L);
+		}
+	}
+}
+
+/* the dead lie under the living (issued after them: a later OAM slot
+ * draws behind); struck and falling play once, then they stay down     */
+static void paint_fallen(bool tick, int cy) {
+	for (uint8_t k = 0; k < fallen_count; ++k) {
+		fallen_t *f = &fallen[k];
+		const uint8_t frame = f->age < 8u ? 0u : f->age < 16u ? 1u : 2u;
+		render_squad(f->civ, f->cls, 0u, RENDER_ANIM_DEATH, frame,
+		             f->x - 16 - cam_x, f->y - cy, f->flip);
+		if (tick && f->age < 255u) {
+			f->age++;
+		}
+	}
+}
+
+/* the camera follows the clash: midway between the two leading edges   */
+static int front_mid(void) {
+	uint8_t n0 = 0u, n1 = 0u;
+	const sim_division_t *o = sim_battle_divisions(SIM_SIDE_OURS, &n0);
+	const sim_division_t *f = sim_battle_divisions(SIM_SIDE_FOE, &n1);
+	int lead = 0, rear = 512;
+	for (uint8_t i = 0; i < n0; ++i) {
+		if (o[i].state != SIM_DIV_DEAD && o[i].x > lead) lead = o[i].x;
+	}
+	for (uint8_t i = 0; i < n1; ++i) {
+		if (f[i].state != SIM_DIV_DEAD && f[i].x < rear) rear = f[i].x;
+	}
+	if (lead == 0) lead = 160;
+	if (rear == 512) rear = 352;
+	return (lead + rear) / 2;
+}
+
+static int foe_rear(void) {
+	uint8_t n = 0u;
+	const sim_division_t *f = sim_battle_divisions(SIM_SIDE_FOE, &n);
+	int x = 360;
+	for (uint8_t i = 0; i < n; ++i) {
+		if (f[i].state != SIM_DIV_DEAD && f[i].x > x) x = f[i].x;
+	}
+	return x;
 }
 
 static void paint_field(const front_art_t *a) {
 	const uint32_t step = ui_anim_step();
 	static uint32_t last_step;
-	const bool tick = step != last_step;
+	const bool tick = step != last_step && !battle_holds();
 	last_step = step;
+	const uint8_t god = battle_god();
 
-	/* sim deltas drive the drama: a loss = the enemy strikes, a kill =
-	 * the god (or the enemy line) staggers                              */
-	const uint8_t units = sim_battle_units();
-	const uint8_t enemies = sim_battle_enemies();
-	if (a->god != RENDER_GOD_NONE) {
-		if (units < seen_units && god_anim != RENDER_GOD_ATTACK) {
-			god_anim = RENDER_GOD_ATTACK;
-			god_step = god_timer = 0;
-		} else if (enemies < seen_enemies && god_anim == RENDER_GOD_IDLE) {
-			god_anim = RENDER_GOD_HURT;
-			god_step = god_timer = 0;
-		}
-	}
-	if (sim_battle_turn() != seen_turn) {
-		/* the next queued order sets where the line goes            */
-		seen_turn = sim_battle_turn();
-		line_x += 4;
-	}
-	const uint8_t next = sim_orders_pending() ? sim_order_at(0u) : 0xFFu;
-	if (tick) {
-		if (next == SIM_ORDER_ADVANCE && line_x < 300) line_x++;
-		if (next == SIM_ORDER_FALLBACK && line_x > 200) line_x--;
-	}
-	seen_units = units;
-	seen_enemies = enemies;
-	alert_take(a);
-	god_tick(a, tick);
-	/* frames into the running alert: the field's acting clock         */
-	const int ap = (alert_frames > 0) ? ALERT_FRAMES - alert_frames : -1;
-	const bool raid = ap >= 0 && (alert_event == SIM_EVT_CAV_CHARGE ||
-	                              alert_event == SIM_EVT_FLANK_BROKEN ||
-	                              alert_event == SIM_EVT_FLANK_HELD);
-	const bool rout = sim_battle_foe_morale() < 20u && a->god == RENDER_GOD_NONE;
-	const bool wavering = sim_battle_morale() < 30u;
-
-	cam_x += ((line_x - 128) - cam_x) / 8;
+	alert_take(god);
+	int target = front_mid() - 128;
+	target = target < 0 ? 0 : target > 256 ? 256 : target;
+	cam_x += (target - cam_x) / 8;
 	render_camera(cam_x, CAM_Y);
 	const int cy = CAM_Y;
 
-	/* player line: one squad per company, 4 per rank, cap 40 sprites  */
-	const int shown = units > MAX_OURS ? MAX_OURS : (int)units;
-	const bool engaged = sim_battle_turn() > 0u;
-	for (int i = 0; i < shown; ++i) {
-		uint8_t cls = (i % 4 == 3) ? RENDER_CLS_ARCHER : RENDER_CLS_SPEAR;
-		if (i >= MAX_OURS - 4) {
-			cls = RENDER_CLS_CAVALRY;
-		}
-		int x = squad_x_player(i);
-		if (cls == RENDER_CLS_CAVALRY && next == SIM_ORDER_FLANK) {
-			x += 40; /* the riders swing wide on a flank             */
-		}
-		if (cls == RENDER_CLS_CAVALRY && sim_charge_armed()) {
-			x += 56; /* the general's charge: riders at the front    */
-		}
-		const uint8_t strength = (i == shown - 1 && units < sim_battle_units_start()) ? 2u : 0u;
-		/* shaken ranks flinch: every third squad plays its hurt cycle */
-		const uint8_t anim = (wavering && i % 3 == 1) ? RENDER_ANIM_HURT
-		                     : (next == SIM_ORDER_HOLD) ? RENDER_ANIM_IDLE
-		                     : engaged ? RENDER_ANIM_ATTACK : RENDER_ANIM_WALK;
-		render_squad(RENDER_CIV_HELLENES, cls, strength, anim,
-		             step + (uint32_t)i, x - cam_x, squad_y(i) - cy, 0u);
-	}
-	if (ap >= 0 && alert_event == SIM_EVT_COLLAPSE && shown < MAX_OURS) {
-		/* the company that broke: it falls where it stood          */
-		render_squad(RENDER_CIV_HELLENES, RENDER_CLS_SPEAR, 3u,
-		             RENDER_ANIM_DEATH, (uint32_t)(ap / 8),
-		             squad_x_player(shown) - cam_x, squad_y(shown) - cy, 0u);
-	}
+	field_map = a->map;
+	paint_side(SIM_SIDE_OURS, RENDER_CIV_HELLENES, step, cy);
+	paint_side(SIM_SIDE_FOE, foe_civ(a), step, cy);
+	/* the generals watch from behind their lines                      */
+	const int ap = (alert_frames > 0) ? ALERT_FRAMES - alert_frames : -1;
 	const bool commanding = ap >= 0 && (alert_event == SIM_EVT_RALLY ||
 	                                    alert_event == SIM_EVT_CHARGE);
+	const int ox = lane_clamp(SIM_LANE_NORTH, 56, 12);
 	render_squad(RENDER_CIV_HELLENES, RENDER_CLS_GENERAL, 0u,
 	             commanding ? RENDER_ANIM_COMMAND : 2u, step,
-	             line_x - 200 - cam_x, FIELD_Y - 30 - cy, 0u);
-	if (raid) {
-		/* the enemy riders sweep round the open wing (or break on the
-		 * ring and wheel away when the Circle holds)                   */
-		const int reach = (alert_event == SIM_EVT_FLANK_HELD)
-		                      ? (ap < 50 ? ap * 2 : 100 - (ap - 50))
-		                      : ap * 2;
-		for (int r = 0; r < 2; ++r) {
-			render_squad(a->enemy, RENDER_CLS_CAVALRY, 0u, RENDER_ANIM_WALK,
-			             step + (uint32_t)r, line_x + 40 - reach - r * 22 - cam_x,
-			             FIELD_Y + 132 + r * 10 - cy, RENDER_SPR_FLIP);
-		}
-	}
-
-	/* enemy line: one squad per enemy, the front one thinning          */
-	const int foes = (a->god != RENDER_GOD_NONE) ? (enemies > 1u ? enemies - 1 : 0)
-	                                             : enemies;
-	for (int i = 0; i < foes && i < MAX_FOES; ++i) {
-		const int x = line_x + 8 + (i % 4) * 34 + (i / 4 % 2) * 8 +
-		              (a->god != RENDER_GOD_NONE ? 60 : 0);
-		const uint8_t strength = (i == foes - 1) ? (uint8_t)(3u - (enemies % 3u)) % 4u : 0u;
-		/* a god's minions form up below its feet, not over it    */
-		const int y = squad_y(i) + (a->god != RENDER_GOD_NONE ? 80 : 0);
-		/* a broken enemy turns its back and drifts off the field    */
-		render_squad(a->enemy, (i % 4 == 3) ? RENDER_CLS_ARCHER : RENDER_CLS_SPEAR,
-		             strength, rout ? RENDER_ANIM_WALK
-		                       : engaged ? RENDER_ANIM_ATTACK : RENDER_ANIM_WALK,
-		             step + (uint32_t)i * 3u,
-		             x + (rout ? 12 + (int)(step % 8u) : 0) - cam_x, y - cy,
-		             rout ? 0u : RENDER_SPR_FLIP);
-	}
-	if (a->god != RENDER_GOD_NONE) {
-		render_god(a->god, (uint8_t)god_anim, (uint32_t)god_step,
-		           line_x - 10 - cam_x, FIELD_Y - 40 - cy, RENDER_SPR_FLIP);
+	             ox - 8 - cam_x, lane_y(SIM_LANE_NORTH, ox) - 10 - cy, 0u);
+	if (god != RENDER_GOD_NONE) {
+		const int gx = foe_rear() + 40;
+		god_tick(god, gx, tick);
+		render_god(god, (uint8_t)god_anim, (uint32_t)god_step,
+		           gx - cam_x, LANE_Y[SIM_LANE_NORTH] - 60 - cy, RENDER_SPR_FLIP);
 		if (fx_frame >= 0) {
-			render_fx(a->god, (uint8_t)fx_frame, fx_x - cam_x, fx_y - cy,
+			render_fx(god, (uint8_t)fx_frame, fx_x - cam_x, fx_y - cy,
 			          RENDER_SPR_FLIP);
 			if (tick && ++fx_frame >= 6) {
 				fx_frame = -1;
 			}
 		}
 	} else {
-		render_squad(a->enemy, RENDER_CLS_GENERAL, 0u, 2u, step,
-		             line_x + 170 - cam_x, FIELD_Y - 30 - cy, RENDER_SPR_FLIP);
+		const int fx = lane_clamp(SIM_LANE_NORTH, foe_rear() + 40, 12);
+		render_squad(foe_civ(a), RENDER_CLS_GENERAL, 0u, 2u, step,
+		             fx - 8 - cam_x, lane_y(SIM_LANE_NORTH, fx) - 10 - cy,
+		             RENDER_SPR_FLIP);
 	}
+	paint_fallen(tick, cy);
 	if (flash > 0) {
 		render_flash((uint8_t)(flash > 6 ? 12 : flash * 2));
 		flash--;
@@ -498,19 +597,22 @@ static void paint_field(const front_art_t *a) {
 		render_flash(0u);
 	}
 
-	/* top plate: the front, the turn, the speed actually running       */
-	char buf[48];
+	/* top plate: the front, the clock, the speed actually running      */
+	char buf[48], t0[8], t1[8];
 	const sim_province_record_t *tab = sim_province_table(NULL);
 	render_rect(RENDER_TOP, 0, 0, 256, 13, RENDER_INK);
-	snprintf(buf, sizeof buf, "%s  Turn %u/%u  %s", tab[sim_battle_province()].name,
-	         (unsigned)sim_battle_turn(), (unsigned)sim_battle_turn_cap(),
-	         sim_speed_badge());
+	clock_text(t0, sizeof t0, sim_battle_time());
+	clock_text(t1, sizeof t1, sim_battle_time_cap());
+	snprintf(buf, sizeof buf, "%s  %s/%s  %s", tab[sim_battle_province()].name, t0, t1,
+	         battle_holds() ? "||" : sim_speed_badge());
 	render_text(RENDER_TOP, 4, 3, RENDER_BRONZE_L, buf);
-	if (a->god != RENDER_GOD_NONE) {
-		render_text(RENDER_TOP, 196, 3, RENDER_CRIT_L, god_name(a->god));
+	if (god != RENDER_GOD_NONE) {
+		render_text(RENDER_TOP, 196, 3, RENDER_CRIT_L, god_name(god));
 		if (sim_battle_boss_phase() >= 2u) {
-			render_text(RENDER_TOP, 232, 3, RENDER_CRIT_L, "II");
+			render_text(RENDER_TOP, 240, 3, RENDER_CRIT_L, "II");
 		}
+	} else if (sim_battle_kind() != SIM_WAR_CONQUEST) {
+		render_text(RENDER_TOP, 196, 3, RENDER_WARN_L, sim_war_name(sim_battle_kind()));
 	}
 	/* the alert plate: 2 s under the header, colour + a lead glyph so
 	 * the severity never rides on colour alone (constitution 7)        */
@@ -523,23 +625,39 @@ static void paint_field(const front_art_t *a) {
 			            col == RENDER_CRIT_L ? "!!" : col == RENDER_WARN_L ? "! " : "> ");
 			render_text(RENDER_TOP, 18, 17, col, copy);
 		}
-		alert_frames--;
+		if (!battle_holds()) {
+			alert_frames--;
+		}
+	} else if (sim_battle_time() < 8u * SIM_BATTLE_HZ) {
+		/* the first seconds teach the two controls that matter       */
+		render_rect(RENDER_TOP, 0, 14, 256, 13, RENDER_INK);
+		render_text(RENDER_TOP, 4, 17, RENDER_ACCENT_L, "> ");
+		render_text(RENDER_TOP, 18, 17, RENDER_ACCENT_L, str(STR_TIP_BATTLE));
+	}
+	if (paused) {
+		render_rect(RENDER_TOP, 88, 88, 80, 16, RENDER_INK);
+		render_text(RENDER_TOP, 96, 92, RENDER_BRONZE_L, "PAUSED (A)");
 	}
 }
 
 /* ---- art: the command panel -------------------------------------------- */
-static void minimap(const front_art_t *a) {
+static void minimap(void) {
 	/* 512 -> 124 px: x * 31 / 128                                        */
 	const int ox = 5, oy = 27;
-	const int units = sim_battle_units() > MAX_OURS ? MAX_OURS : (int)sim_battle_units();
-	for (int i = 0; i < units; i += 2) {
-		render_rect(RENDER_BOTTOM, ox + squad_x_player(i) * 31 / 128,
-		            oy + squad_y(i) * 31 / 128, 3, 2, RENDER_ACCENT_L);
-	}
-	for (int i = 0; i < sim_battle_enemies() && i < MAX_FOES; i += 2) {
-		const int x = line_x + 8 + (i % 4) * 34 + (a->god != RENDER_GOD_NONE ? 60 : 0);
-		render_rect(RENDER_BOTTOM, ox + x * 31 / 128,
-		            oy + squad_y(i) * 31 / 128, 3, 2, RENDER_CRIT_L);
+	for (uint8_t side = 0; side < 2u; ++side) {
+		uint8_t n = 0u;
+		const sim_division_t *d = sim_battle_divisions(side, &n);
+		for (uint8_t i = 0; i < n; ++i) {
+			if (d[i].state == SIM_DIV_DEAD) {
+				continue;
+			}
+			/* a dot per division: square = ours, bar = theirs, so the
+			 * sides read without colour (constitution 7)            */
+			render_rect(RENDER_BOTTOM, ox + d[i].x * 31 / 128,
+			            oy + LANE_Y[d[i].lane % SIM_LANES] * 31 / 128,
+			            side ? 4 : 3, side ? 2 : 3,
+			            side ? RENDER_CRIT_L : RENDER_ACCENT_L);
+		}
 	}
 	render_box(RENDER_BOTTOM, ox + cam_x * 31 / 128, oy + CAM_Y * 31 / 128,
 	           62, 46, RENDER_BRONZE_L);
@@ -561,10 +679,9 @@ static void paint_panel(void) {
 	render_text(RENDER_BOTTOM, 10, 68, RENDER_INK, buf);
 	render_bar(RENDER_BOTTOM, 10, 78, 114, sim_battle_enemies(),
 	           sim_battle_enemies_start(), RENDER_BAR_BOSS);
-	snprintf(buf, sizeof buf, "%s, %s. Queue %u/32",
+	snprintf(buf, sizeof buf, "%s, %s.",
 	         sim_formation_name(sim_formation_kind()),
-	         sim_terrain_name(sim_front_terrain(sim_battle_province())),
-	         (unsigned)sim_orders_pending());
+	         sim_terrain_name(sim_front_terrain(sim_battle_province())));
 	render_text(RENDER_BOTTOM, 10, 92, RENDER_INK2, buf);
 	render_text_wrap(RENDER_BOTTOM, 10, 104, 114, 3, RENDER_INK,
 	                 battle_state_copy());
@@ -573,7 +690,7 @@ static void paint_panel(void) {
 
 /* GAME_DESIGN 7: morale both sides + the flanks, under the minimap.
  * Every state is a word as well as a colour (grayscale-safe).          */
-static void paint_status(const front_art_t *a) {
+static void paint_status(uint8_t god) {
 	static const char *const FLANK[3] = {"secure", "pressed", "BROKEN"};
 	static const uint8_t FLANK_COL[3] = {RENDER_LINE, RENDER_WARN_L, RENDER_CRIT_L};
 	char buf[32];
@@ -585,10 +702,15 @@ static void paint_status(const front_art_t *a) {
 	                                                             : RENDER_SURFACE, buf);
 	render_bar(RENDER_BOTTOM, 76, 118, 50, sim_battle_morale(), SIM_MORALE_MAX,
 	           RENDER_BAR_MORALE);
-	if (a->god != RENDER_GOD_NONE) {
-		snprintf(buf, sizeof buf, "%s %s", god_name(a->god),
-		         sim_battle_boss_phase() >= 2u ? "ENRAGED" : "unbowed");
-		render_text(RENDER_BOTTOM, 8, 130, RENDER_CRIT_L, buf);
+	if (god != RENDER_GOD_NONE) {
+		/* the god's countdown: the omen is a plan, not a surprise   */
+		const uint8_t eta = sim_battle_boss_eta();
+		if (sim_battle_boss_phase() >= 2u && eta == 0u) {
+			snprintf(buf, sizeof buf, "%s ENRAGED", god_name(god));
+		} else {
+			snprintf(buf, sizeof buf, "%s strikes %us", god_name(god), (unsigned)eta);
+		}
+		render_text(RENDER_BOTTOM, 8, 130, eta <= 6u ? RENDER_CRIT_L : RENDER_WARN_L, buf);
 	} else {
 		snprintf(buf, sizeof buf, "%s %u", sim_battle_foe_morale() < 20u ? "Foe flees" : "Foe",
 		         (unsigned)sim_battle_foe_morale());
@@ -601,13 +723,13 @@ static void paint_status(const front_art_t *a) {
 	render_text(RENDER_BOTTOM, 8, 143, FLANK_COL[fl], buf);
 }
 
-/* the general's two abilities: name + key, or the turns left           */
+/* the general's two abilities: name + key, or the seconds left         */
 static void paint_ability(int x, int w, uint8_t ab, const char *name,
                           const char *key) {
 	char buf[24];
 	const uint8_t cd = sim_ability_cooldown(ab);
 	if (cd > 0u) {
-		snprintf(buf, sizeof buf, "%s %u", name, (unsigned)cd);
+		snprintf(buf, sizeof buf, "%s %us", name, (unsigned)cd);
 	} else {
 		snprintf(buf, sizeof buf, "%s %s", name, key);
 	}
@@ -618,13 +740,22 @@ static void paint_ability(int x, int w, uint8_t ab, const char *name,
 }
 
 static void paint_bottom(const front_art_t *a) {
-	char buf[40];
+	char buf[40], t0[8];
 	const sim_province_record_t *tab = sim_province_table(NULL);
-	render_backdrop(RENDER_BOTTOM, a->panel, a->god);
+	const uint8_t god = battle_god();
+	render_backdrop(RENDER_BOTTOM, a->panel, god);
 	render_text(RENDER_BOTTOM, 8, 8, RENDER_BRONZE_L, tab[sim_battle_province()].name);
-	snprintf(buf, sizeof buf, "Turn %u/%u", (unsigned)sim_battle_turn(),
-	         (unsigned)sim_battle_turn_cap());
-	render_text(RENDER_BOTTOM, 96, 8, RENDER_LINE, buf);
+	clock_text(t0, sizeof t0, sim_battle_time());
+	render_text(RENDER_BOTTOM, 96, 8, RENDER_LINE, t0);
+	/* the fallen, counted where the eye goes after the field (GDD 7)   */
+	{
+		const unsigned lost = sim_battle_units_start() > sim_battle_units()
+		                          ? (unsigned)(sim_battle_units_start() - sim_battle_units())
+		                          : 0u;
+		render_icon(RENDER_BOTTOM, RENDER_ICON_CASUALTIES, 128, 3, RENDER_SPR_FRONT);
+		snprintf(buf, sizeof buf, "%s %u", str(STR_FALLEN), lost);
+		render_text(RENDER_BOTTOM, 146, 8, lost ? RENDER_CRIT_L : RENDER_LINE, buf);
+	}
 	const uint8_t sp = sim_speed();
 	render_icon(RENDER_BOTTOM, battle_holds() ? RENDER_ICON_PAUSE
 	                           : sp == SIM_SPEED_X4 ? RENDER_ICON_SPEED4
@@ -636,27 +767,26 @@ static void paint_bottom(const front_art_t *a) {
 	if (panel_open) {
 		paint_panel();
 	} else {
-		minimap(a);
-		paint_status(a);
+		minimap();
+		paint_status(god);
 	}
-	/* 2x2 order tiles, d-pad == taps                                     */
+	/* 2x2 stance tiles, d-pad == taps; the stance in force is focused    */
 	static const char *const LABEL[4] = {"Advance", "Flank", "Hold", "Fall back"};
 	static const char *const KEY[4] = {"Up", "Right", "Left", "Down"};
-	const uint8_t next = sim_orders_pending() ? sim_order_at(0u) : 0xFFu;
 	for (int t = 0; t < 4; ++t) {
 		const int x = 134 + (t & 1) * 60, y = 26 + (t >> 1) * 34;
+		const bool on = sim_battle_stance() == TILE_ORDER[t];
 		render_button(RENDER_BOTTOM, x, y, 58, 30, LABEL[t],
 		              panel_open ? RENDER_BTN_DISABLED
-		              : next == TILE_ORDER[t] ? RENDER_BTN_FOCUS
-		                                      : RENDER_BTN_NORMAL);
+		              : on ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
 		render_text(RENDER_BOTTOM, x + 4, y + 21, RENDER_INK2, KEY[t]);
+		if (on && !panel_open) {
+			render_ring(RENDER_BOTTOM, x, y, 58, 30);
+		}
 	}
 	render_button(RENDER_BOTTOM, 134, 94, 118, 22,
-	              last_touch == 4 ? "Tap again: End turn" : "End turn (A)",
-	              last_touch == 4 ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
-	if (last_touch == 4) {
-		render_ring(RENDER_BOTTOM, 134, 94, 118, 22);
-	}
+	              paused ? "Paused: A resumes" : "Pause (A)",
+	              paused ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
 	render_button(RENDER_BOTTOM, 134, 120, 58, 18, "Undo (B)",
 	              sim_undo_armed() ? RENDER_BTN_NORMAL : RENDER_BTN_DISABLED);
 	snprintf(buf, sizeof buf, "Speed %s", sim_speed_badge());
@@ -675,15 +805,16 @@ static const ui_row_t BATTLE_ROWS[] = {
 	{16, RENDER_BOTTOM, 26, 176, 226, 1, RENDER_LINE},
 };
 
-static void paint_intro(const front_art_t *a) {
-	render_backdrop(RENDER_TOP, RENDER_BD_STAGE, a->god);
-	render_backdrop(RENDER_BOTTOM, RENDER_BD_CARD, a->god);
+static void paint_intro(void) {
+	const uint8_t god = battle_god();
+	render_backdrop(RENDER_TOP, RENDER_BD_STAGE, god);
+	render_backdrop(RENDER_BOTTOM, RENDER_BD_CARD, god);
 	render_rect(RENDER_TOP, 0, 180, 256, 12, RENDER_INK);
 	render_text(RENDER_TOP, 4, 182, RENDER_BRONZE_L, "A: take the field");
 	{
 		/* GAME_DESIGN 8: time to understand the threat - the god's
 		 * omen and its answer, and what defeating it is worth        */
-		const uint8_t boss = sim_front_boss(sim_battle_province());
+		const uint8_t boss = sim_battle_boss();
 		char buf[48];
 		render_rect(RENDER_BOTTOM, 0, 160, 256, 32, RENDER_INK);
 		snprintf(buf, sizeof buf, "Omen, then answer: %s", sim_boss_omen(boss));
@@ -692,7 +823,7 @@ static void paint_intro(const front_art_t *a) {
 		         sim_relic_brief(boss));
 		render_text(RENDER_BOTTOM, 4, 177, RENDER_BRONZE_L, buf);
 	}
-	if (a->god == RENDER_GOD_ZEUS && intro_frames == INTRO_FRAMES - 30) {
+	if (god == RENDER_GOD_ZEUS && intro_frames == INTRO_FRAMES - 30) {
 		flash = 10;
 	}
 	if (flash > 0) {
@@ -707,7 +838,7 @@ static void paint_intro(const front_art_t *a) {
 }
 
 void battle_frame(void) {
-	char line[80];
+	char line[80], t0[8], t1[8];
 	ui_draw_layout(BATTLE_ROWS, (uint8_t)(sizeof BATTLE_ROWS / sizeof BATTLE_ROWS[0]));
 	if (!sim_battle_active() && !sim_battle_sealed()) {
 		ui_draw_text(0, 0, "FRONT: no battle running");
@@ -716,21 +847,22 @@ void battle_frame(void) {
 	}
 	const front_art_t *a = front_art(sim_battle_province());
 	if (intro_frames > 0) {
-		paint_intro(a);
+		paint_intro();
 		ui_draw_text(0, 0, "BOSS INTRO");
 		return;
 	}
-	render_backdrop(RENDER_TOP, a->map, a->god);
+	render_backdrop(RENDER_TOP, a->map, battle_god());
 	paint_field(a);
 	paint_bottom(a);
 
 	const sim_snapshot_t *snap = sim_snapshot();
 	const sim_province_record_t *tab = sim_province_table(NULL);
+	static const char *const STANCE[4] = {"ADV", "HOLD", "FLK", "FAL"};
 
-	snprintf(line, sizeof line, "T%u/%u  FRONT %s  ETC T%u",
-	         (unsigned)sim_battle_turn(), (unsigned)sim_battle_turn_cap(),
-	         tab[sim_battle_province()].name,
-	         (unsigned)(sim_battle_turn_cap() - sim_battle_turn()));
+	clock_text(t0, sizeof t0, sim_battle_time());
+	clock_text(t1, sizeof t1, sim_battle_time_cap());
+	snprintf(line, sizeof line, "%s/%s  FRONT %s  %s", t0, t1,
+	         tab[sim_battle_province()].name, sim_war_name(sim_battle_kind()));
 	ui_draw_text(0, 0, line);
 	/* GAME_DESIGN 7 readouts on the semantic channel (row 17; 18..23
 	 * are the dev overlay's): morale, flank, the general, the alert     */
@@ -745,36 +877,37 @@ void battle_frame(void) {
 		ui_draw_text(0, 17, line);
 	}
 
-	/* the 1-row strip (<= 32 px; spec-04 R1): mm | turn | ETC | HP       */
-	snprintf(line, sizeof line, "|mm|T%u ETC %u|HP %u/%u|%s|%s|q %u/32|",
-	         (unsigned)sim_battle_turn(),
-	         (unsigned)sim_battle_enemies(),
+	/* the 1-row strip (<= 32 px; spec-04 R1): mm | clock | ETC | HP     */
+	snprintf(line, sizeof line, "|mm|%s ETC %u|HP %u/%u|%s|%s|%s|",
+	         t0, (unsigned)sim_battle_enemies(),
 	         (unsigned)sim_battle_units(),
 	         (unsigned)sim_battle_units_start(),
+	         STANCE[sim_battle_stance() & 3u],
 	         sim_undo_armed() ? "UNDO" : "UNDO off", /* T023 chip       */
-	         sim_speed_badge(), /* R4: badge text == active rate          */
-	         (unsigned)queue_diag()->cmd_depth);
+	         paused ? "||" : sim_speed_badge()); /* R4: badge == rate    */
 	ui_draw_text(0, 11, line);
-	/* 2x2 order tiles (the touch hit map, T020), D-pad == taps.         */
+	/* 2x2 stance tiles (the touch hit map, T020), D-pad == taps.        */
 	ui_draw_text(0, 9, "[ADV] [FLK]");
 	ui_draw_text(0, 10, "[HOLD][FAL]");
-	ui_draw_text(0, 13, "D-pad = order, A = End turn, B = Undo, R = speed");
+	ui_draw_text(0, 13, "D-pad = stance, A = pause, B = undo, R = speed");
 	/* R5: while a clamp is live the strip says what actually runs -
 	 * byte-exact per spec-04 states ("Clamp: \"x4 -> x2: 4.9 ms..."). */
 	{
 		const char *cc = sim_speed_clamp_copy();
 		ui_draw_text(0, 12, cc != NULL ? cc : "");
 	}
-	/* ack / reject / commit copy (sim-owned, incl. the 2 s hold); with
-	 * nothing to ack the plate carries the written state (T030).       */
+	/* ack / refusal copy (sim-owned, 2 s hold); with nothing to ack
+	 * the plate carries the written state (T030).                      */
 	{
 		const char *st = sim_order_status();
 		ui_draw_text(0, 14, st != NULL ? st : battle_state_copy());
 	}
 	if (panel_open) {
 		ui_draw_text(0, 16, "Panel open: battle held. X closes.");
+	} else if (paused) {
+		ui_draw_text(0, 16, "Paused: battle held. A resumes.");
 	} else if (sim_speed_clamp_copy() == NULL) {
-		ui_draw_text(0, 16, "Up/Down/Left/Right order. A end turn.");
+		ui_draw_text(0, 16, "Up/Left/Right/Down set the stance.");
 	}
 	snprintf(line, sizeof line, "TREASURY %lu",
 	         (unsigned long)snap->treasury);

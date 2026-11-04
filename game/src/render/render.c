@@ -20,6 +20,7 @@
 #include "art_assets_game.h" /* the table minus the design mock-ups */
 #include "art_index.h"
 #include "art_palettes.h"
+#include "art_terrain.h"
 
 #define SCREENS 2
 #define OV_TILES 768u                 /* 32 x 24 tiles                  */
@@ -498,6 +499,40 @@ void render_camera(int x, int y) {
 	cam_y = y;
 }
 
+/* the walkable lanes of a battle map (tools/art/lanes.py): the row a
+ * lane walks at map x, bent round rock and water, and its x span        */
+static int lane_map(uint8_t backdrop) {
+	if (backdrop < RENDER_BD_MAP_PLAINS || backdrop > RENDER_BD_MAP_ARENA) {
+		return -1;
+	}
+	return backdrop - RENDER_BD_MAP_PLAINS;
+}
+
+int render_lane_dy(uint8_t backdrop, uint8_t lane, int x) {
+	const int m = lane_map(backdrop);
+	if (m < 0 || lane > 2u) {
+		return 0;
+	}
+	/* linear between column centres: a lane bends, it never steps    */
+	int c = (x - ART_LANE_COL / 2) / ART_LANE_COL;
+	if (x < ART_LANE_COL / 2) c = 0;
+	if (c >= ART_LANE_COLS - 1) return ART_LANE_DY[m][lane][ART_LANE_COLS - 1];
+	const int f = x - (c * ART_LANE_COL + ART_LANE_COL / 2);
+	const int a = ART_LANE_DY[m][lane][c], b = ART_LANE_DY[m][lane][c + 1];
+	return a + (b - a) * (f < 0 ? 0 : f) / ART_LANE_COL;
+}
+
+void render_lane_span(uint8_t backdrop, uint8_t lane, int *x0, int *x1) {
+	const int m = lane_map(backdrop);
+	if (m < 0 || lane > 2u) {
+		*x0 = 0;
+		*x1 = 511;
+		return;
+	}
+	*x0 = ART_LANE_SPAN[m][lane][0];
+	*x1 = ART_LANE_SPAN[m][lane][1];
+}
+
 void render_flash(uint8_t level) {
 	setBrightness(1, level > 16u ? 16 : level);
 }
@@ -573,8 +608,10 @@ void render_squad(uint8_t civ, uint8_t cls, uint8_t strength, uint8_t anim,
 		    SpriteSize_16x16, PAL_CIV0 + (civ & 3), flags);
 		return;
 	}
-	const art_range_t *r =
-	    &ART_SQUAD[strength > 3u ? 3u : strength][anim > 2u ? 2u : anim];
+	/* the fallen: step picks the frame (struck, falling, down)         */
+	const uint8_t sq = anim == RENDER_ANIM_DEATH ? (uint8_t)ART_SQ_DEATH
+	                   : anim > 2u ? 2u : anim;
+	const art_range_t *r = &ART_SQUAD[strength > 3u ? 3u : strength][sq];
 	const uint32_t f = r->first + step % r->count;
 	put(RENDER_TOP, slot, g + f * 256u, 256u, x, y, 32, 16, SpriteSize_32x16,
 	    PAL_CIV0 + (civ & 3), flags);

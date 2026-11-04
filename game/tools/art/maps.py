@@ -245,6 +245,12 @@ def _paint_terrain(grid, P, seed, features):
 
 _STAMPS = {}
 
+# What an army cannot walk through, per map (lanes.py routes round it):
+# rock and cliff, water and its shore, and every solid stamp. Trees are
+# not in it - a wood is ground the lanes cross (GAME_DESIGN 7 forests).
+SOLID = {}
+_solid_stamps = np.zeros((N, N), bool)
+
 
 def stamp(cv, fn, x, y, P, *args):
     """Draw a stamp once per (fn, args) on a 24x24 cell, then paste it."""
@@ -254,6 +260,17 @@ def stamp(cv, fn, x, y, P, *args):
         fn(small, 0, 0, P, *args)
         _STAMPS[key] = small
     cv.paste(_STAMPS[key], x, y)
+    if fn is not tree:
+        op = _STAMPS[key].opaque()
+        h, w = min(24, N - y), min(24, N - x)
+        _solid_stamps[y:y + h, x:x + w] |= op[:h, :w]
+
+
+def _keep_solid(name, mk):
+    global _solid_stamps
+    water = mk["water"]
+    SOLID[name] = mk["rock"] | water | dilate(water) | _solid_stamps
+    _solid_stamps = np.zeros((N, N), bool)
 
 
 def _stamp_cells(grid, masks, rng, density, avoid):
@@ -280,6 +297,10 @@ def plains() -> Canvas:
     blob(grid, 5, 5, 3, ROCK, 4)            # a rocky knoll
     blob(grid, 27, 4, 2.5, ROCK, 5)
     paint_line(grid, [(14, 16), (18, 16)], DIRT)   # the ford
+    # two more fords where the north and south lanes wade the river:
+    # an army crosses at the shallows, never over deep water
+    paint_line(grid, [(17, 12), (25, 12)], DIRT, 2)
+    paint_line(grid, [(10, 18), (19, 18)], DIRT, 2)
     cv, mk = _paint_terrain(grid, P, 10, {"fields": (XX > 340) & (YY > 360)})
     avoid = mk["water"] | mk["dirt"] | mk["rock"]
     forest = (noise(N // M, N // M, 77, 6.0, 2) > 0.58)
@@ -291,6 +312,7 @@ def plains() -> Canvas:
         stamp(cv, house, x, y, P, x == 432)
     for x, y in ((96, 48), (112, 48), (96, 80), (128, 64)):
         stamp(cv, rock, x, y, P, 1)
+    _keep_solid("plains", mk)
     return cv
 
 
@@ -299,7 +321,7 @@ def desert() -> Canvas:
     rng = np.random.default_rng(2)
     grid = np.zeros((G, G), int)
     blob(grid, 8, 8, 5, ROCK, 11)           # mesas
-    blob(grid, 26, 22, 4.5, ROCK, 12)
+    blob(grid, 27, 27, 4, ROCK, 12)      # south of the battle lanes
     blob(grid, 25, 6, 2.5, ROCK, 13)
     blob(grid, 10, 25, 2.6, WATER, 14)      # the oasis
     paint_line(grid, [(0, 14), (12, 15), (20, 13), (32, 18)], DIRT)   # caravan track
@@ -317,6 +339,7 @@ def desert() -> Canvas:
         stamp(cv, tree, x + (j % 2) * 6 - 3, y + (j // 2) * 6 - 3, P, 2 if oasis[y // M, x // M] else 0)
     for x, y in ((224, 96), (240, 96), (256, 112)):
         stamp(cv, column, x, y, P, x != 240)
+    _keep_solid("desert", mk)
     return cv
 
 
@@ -324,8 +347,8 @@ def highlands() -> Canvas:
     P = BIOMES["highlands"]
     rng = np.random.default_rng(3)
     grid = np.zeros((G, G), int)
-    grid[:, :7] = ROCK                      # mountain walls left and right
-    grid[:, 26:] = ROCK
+    grid[:, :4] = ROCK                      # mountain walls left and right
+    grid[:, 29:] = ROCK
     blob(grid, 16, 7, 4, WATER, 21)         # tarn
     paint_line(grid, [(16, 32), (15, 24), (17, 16), (12, 12), (10, 0)], DIRT)  # the pass road
     blob(grid, 20, 24, 2.5, ROCK, 22)
@@ -338,6 +361,7 @@ def highlands() -> Canvas:
         stamp(cv, tree, x + (j % 2) * 6 - 3, y + (j // 2) * 6 - 3, P, 2)
     for x, y in ((240, 400), (256, 400), (272, 416)):
         stamp(cv, house, x, y, P, False)
+    _keep_solid("highlands", mk)
     return cv
 
 
@@ -383,7 +407,7 @@ def arena() -> Canvas:
     rng = np.random.default_rng(4)
     grid = np.zeros((G, G), int)
     blob(grid, 16, 16, 9, DIRT, 41)        # the plaza
-    blob(grid, 16, 16, 3.2, ROCK, 42)      # the altar dais
+    blob(grid, 16, 25, 2.4, ROCK, 42)      # the altar dais, south of the lanes
     grid[:3, :] = WATER                    # the chasm frames the arena
     grid[-3:, :] = WATER
     grid[:, :2] = WATER
@@ -402,6 +426,7 @@ def arena() -> Canvas:
         stamp(cv, column, x, y, P, i % 3 == 1)
     for x, y in ((96, 400), (400, 96), (112, 112), (384, 400)):
         stamp(cv, rock, x, y, P, 2)
+    _keep_solid("arena", mk)
     return cv
 
 

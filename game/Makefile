@@ -119,7 +119,7 @@ $(BUILD)/art/%.o: $(BUILD)/art/%.c
 	$(CC) $(CFLAGS) $< -o $@
 
 # render.c includes art_assets.h, which includes every grit header.
-$(BUILD)/src/render/render.o: $(ART_C) $(ART)/art_assets_game.h $(ART)/art_index.h $(ART)/art_palettes.h
+$(BUILD)/src/render/render.o: $(ART_C) $(ART)/art_assets_game.h $(ART)/art_index.h $(ART)/art_palettes.h $(ART)/art_terrain.h
 
 # ---------------------------------------------------------------------------
 # Link and package
@@ -175,7 +175,7 @@ cycles:
 # no god trivial, none impossible, every god's counter worth playing).
 balance:
 	@mkdir -p tests/host/bin
-	gcc -O2 -Wall -Wextra -std=c11 -Iinclude -Isrc -Itests/host -Isrc/save 	    tests/host/balance_probe.c src/queue/queue.c src/loop/trace.c 	    src/input/input.c src/sim/sim.c src/save/save.c src/save/slots.c 	    src/save/crc32.c src/save/status.c -o tests/host/bin/balance_probe
+	gcc -O2 -Wall -Wextra -std=c11 -Iinclude -Isrc -Itests/host -Isrc/save 	    tests/host/balance_probe.c src/queue/queue.c src/loop/trace.c 	    src/input/input.c src/sim/sim.c src/sim/field.c src/sim/war.c src/save/save.c src/save/slots.c 	    src/save/crc32.c src/save/status.c -o tests/host/bin/balance_probe
 	./tests/host/bin/balance_probe --gate | tail -8
 
 # poc: the ADR-0007 unit-cap POC sweep (B19, spec-04 T015). Builds the

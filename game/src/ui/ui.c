@@ -52,7 +52,7 @@ static void bench_frame_hash(void) {
 	frame_hash = hash_bytes(frame_hash, sim_formation(),
 	                        SIM_FORMATION_SLOTS);
 	buf[0] = (uint8_t)sim_battle_active();
-	buf[1] = sim_battle_turn();
+	buf[1] = (uint8_t)sim_battle_time();
 	buf[2] = sim_battle_enemies();
 	buf[3] = sim_battle_units();
 	buf[4] = sim_battle_province();

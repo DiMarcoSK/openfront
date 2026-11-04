@@ -3,7 +3,7 @@
 Owner: arch · probe: `tests/host/test_battle.c`, `test_speed.c`,
 `test_order.c`, `test_battle_flow.c`, `test_battle_depth.c`,
 `make cycles`, `make poc`, `make balance` · evidence: BACKLOG B10/B19–B23,
-B27a.
+B27a, B27b (ADR-0008 real time).
 
 **SLO line — FRAME < 13.3 ms** (probe `cyc05/19`, owner arch): the
 cycle harness keeps ≤ 150 cycles/unit and the 300k cycles/frame budget;
@@ -16,56 +16,61 @@ boundary later than 120 ms counts as missed (overlay page 1, `MI`).
 ## Flow
 
 Deploy (Base) → boss intro on a divine front (stage on top, card below,
-≤ 2 s, A skips; the sim is held) → turns at 1/s (x1), 2/s, 4/s →
-seal in the same step → Result in ≤ 1 frame.
+≤ 2 s, A skips; the sim is held) → the field runs in real time (ADR-0008):
+10 ticks/s at x1, 20 at x2, 40 at x4, same rules → seal in the same tick
+→ Result in ≤ 1 frame. A common battle lasts 2-5 min at x1; the cap is
+5:00 (7:00 on a god's field, +1:00 with the Harpe) and reaching it is a
+defeat.
 
-## Orders and the panel
+## Stances and the panel
 
 | Input | Effect |
 |---|---|
-| Up / Right / Left / Down (or the 2×2 tiles) | Advance (+1 dmg) / Flank (+2, 1 own loss) / Hold (no loss) / Fall back (no kill, no loss) |
-| B / Undo chip | single-level undo: the pre-order hash comes back |
-| A / End turn (2 taps) | flush the queue, close undo, `Turn committed, undo closed.` for 2 s |
+| Up / Right / Left / Down (or the 2×2 tiles) | stance, live from the next tick until the next order: Advance (close and fight) / Flank (wings and riders ride down their lanes past the foe's line and turn in on its side or rear) / Hold (stand; -25% taken, morale climbs, +25% on highlands, siege walls -30% more) / Fall back (disengage west; -50% taken, 0 melee dealt, bows still loose) |
+| B / Undo chip | the previous stance comes back (single level) |
+| A / Pause bar | pause / resume; the field holds (0 ticks) |
 | R / Speed chip | x1 → x2 → x4; badge = the rate actually running |
-| X / minimap tap | the order panel: HP of both lines, formation + terrain, queue, state copy; tick + step held, 0 catch-up |
-| Y / Rally button | the general: morale +35, flanks re-formed, cooldown 4 turns; closes undo |
-| L / Charge button | the general: +3 on the next strike, cooldown 5 turns; closes undo |
+| X / minimap tap | the order panel: both hosts, formation + terrain, state copy; field held, 0 catch-up |
+| Y / Rally button | the general: morale +35, flanks re-formed and warded 6 s, cooldown 30 s |
+| L / Charge button | the general: every division drives in for 6 s, blows +60%, cooldown 30 s |
 
-33rd order: `Order not queued: 32/32 waiting. Undo 1 or End turn.` (32 kept).
+## The field (GAME_DESIGN 7-8, ADR-0008)
 
-## Battle depth (GAME_DESIGN 7-8, B27a)
-
-One turn = the queued order, then these layers, all O(1) and seeded
-(Retry replays them byte-exact):
+Up to 10 divisions a side in 3 lanes (north wing, centre, south wing) on
+the 512 px map. Ours are the formation slots (class by slot: foot, foot,
+riders, bows, ...); theirs come from the front's host (2 companies a
+division, riders on the wings, more horse on plains). Every tick each
+division picks a foe, marches, wheels or rides, strikes when in reach;
+all blows land together. Luck comes only from the sim's LCG (seed jitter
+at open, 88..112% per blow), so Retry replays byte-exact.
 
 | Layer | Rule |
 |---|---|
-| Army | strikes 1..2, +1 at 10 / 24 / 48 companies (diminishing) |
-| Formation (Base tab, saved in the aggregate `formation` byte) | Line balanced · Phalanx bleeds 1/8 ahead but a broken flank costs 2 · Wedge +2 on driven turns 1-3, bleeds 1/2 · Circle flank-proof, strikes -1 (floor 2) |
-| Terrain | Plains: flank tries 1/3 (cavalry) · Desert: morale -3/turn · Highlands: flank 1/8, Hold strikes +1 · Arena: the god's ground |
-| Flanks | open on no order / Advance; Hold or Flank close them; Circle holds them |
-| Morale | -8 per loss, +2 per kill, Hold +6; < 30 shaken (strikes -1); 0 = a company deserts. The foe breaks below 20 (strikes +1); gods never break |
-| Outnumbered | enemies >= 2x companies: +1 loss unless dug in |
-| Gods | act on turns 2, 5, 8 (enraged below half: every even turn), omen one turn before. Counters: Zeus Fall back, Poseidon Hold, Hades Charge, Ares Rally, Kronos Flank. Each ignored blow raises wrath (+1 severity, cap 3) |
-| Relics | a taken god front grants its relic for good: Keraunos turn-1 +1, Trident Flank +1, Helm first loss spared, Spear morale 75, Harpe 10 turns |
+| Formation (Base tab, saved in the aggregate `formation` byte) | Line holds every lane · Phalanx one deep block: 70% taken ahead, 200% / 250% on the side / rear, the wings left open · Wedge spearhead: +30% for its first 4 s of contact, +15% taken · Circle one ring with no sides (side and rear blows count as frontal), -10% dealt, slower |
+| Flanks | geometry: an empty lane is ridden through; a division that wheels in strikes the side (x1.5) while it fights, past the line it strikes the rear (x2). A broken flank costs 6 morale and 1 a 3 s while it lasts |
+| Terrain | Plains: more enemy riders · Desert: morale -1 / 3 s · Highlands: Hold +25% · Arena: the god's ground |
+| Morale | losing half the army ≈ -30, kills lift ours, Hold +1 / 2 s; < 30 shaken (-20% dealt); 0 = the weakest division breaks and runs. The foe breaks below 20 (+50% taken, gone 5 s later = victory); gods never break |
+| Gods | first blow at 0:25, then every 35 s (30 s enraged below half), the omen 6 s before with a countdown on the panel. The answer must be live at the instant of the blow: Zeus Fall back, Poseidon Hold, Hades the Charge, Ares the Rally (or morale ≥ 80), Kronos Flank. An answered blow turns on the god's own host; an ignored one raises wrath (+1 severity, cap 3) |
+| Relics | earned for good when a god falls (saved): Keraunos first 20 s +25%, Trident Flank +25%, Helm first loss spared, Spear morale 75, Harpe +60 s |
+| Ambush | conquests, retakes and raids may be struck on the march (ADR-0009): foe 96 px closer, flanks broken, morale -15 |
 
-Alerts: one per turn, the highest-priority event (`SIM_EVT_*` order),
+Alerts: one per tick, the highest-priority event (`SIM_EVT_*` order),
 2 s on the top plate with a lead glyph (`!!` crit, `!` warn, `>` good)
-and the alert cue; the field acts it out (cavalry raid, collapse, the
-god's cast, Zeus's flash, a routed foe turning its back).
+and the alert cue; the field acts it out (riders wheeling, the god's cast,
+Zeus's flash, a routed foe turning its back, flanked divisions ticked).
 
-Balance gate (`make balance`, in `make ci`): 400 seeds per front x
-formation x policy. Today: every mortal front 100% for a prepared player;
-every god 0% for a passive one and 78-100% for a prepared one; answering
-the omen adds 13-100 win pts or saves 67-93% of the losses.
+Balance gate (`make balance`, in `make ci`): 100 seeds per front x
+formation x policy. Today: every mortal front ≥ 60% for a prepared player
+in its best formation, typical length 104-191 s; every god 0% passive,
+100% prepared; answering the omen adds 97-100 win pts.
 
 ## The five written states (panel + alert plate)
 
 | State | Copy |
 |---|---|
 | Empty | `No battle running. Deploy from Base.` |
-| Loading | `Deploying n companies. Turn 1 next.` |
-| Error | the reject copy (33rd order, orders need a live battle) |
+| Loading | `Deploying n companies. The lines advance.` |
+| Error | the refusal copy (`Charge ready in n s.`, orders need a live battle) |
 | Success | `All n companies standing.` |
 | Partial | `n of m companies standing.` |
 
@@ -73,17 +78,21 @@ the omen adds 13-100 win pts or saves 67-93% of the losses.
 
 A battle is never persisted (aggregate reserved[3] = 0); a record carrying
 the in-battle marker is refused (`sim_ingest_rejected_midturn`) and the
-next deploy starts at turn 1.
+next deploy starts at tick 0.
 
 ## Art
 
-Top: the front's field under the high camera, both lines as 32×16 squads
-(12 men each), the general, and on divine fronts the 128×128 god (idle /
-attack + effect on our losses / hurt on kills) with Zeus's bolt flash.
-Bottom: `frame_battle_<field>` (per-god arena frames) with the live
-minimap dots + camera box, the morale / foe / flank block, order tiles,
-End turn, Undo, speed, Rally / Charge with their cooldowns, alert plate.
-The boss intro adds the omen-and-answer line and the relic at stake.
+Top: the front's field under the high camera that follows the clash;
+each division is a cluster of 1-3 squads (32×16, 12 men each) at its own
+x and lane, thinning as it loses companies, walking / fighting / idle by
+state, a crit tick over a flanked one; the generals; on a god's field the
+128×128 god behind its host (cast on omens and blows, hurt when
+countered) with Zeus's bolt flash; `PAUSED (A)` plate. Bottom:
+`frame_battle_<field>` with the minimap (square = ours, bar = theirs) +
+camera box, the morale / foe (or the god's countdown) / flank block,
+stance tiles (the stance in force ringed), Pause, Undo, speed, Rally /
+Charge with seconds left, alert plate. The boss intro adds the
+omen-and-answer line and the relic at stake.
 
 ## Rollback
 

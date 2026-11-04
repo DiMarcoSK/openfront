@@ -17,6 +17,7 @@
 #include "ui_draw.h"
 #include "base_tier.h"
 #include "screens.h"
+#include "guide.h"
 
 /* ---- state -------------------------------------------------------------- */
 static int tab;                     /* 0 = Recruit, 1 = Formation        */
@@ -192,11 +193,19 @@ static void do_action(void) {
 /* B16 touch parity (spec-03 T019): tap 1 moves the ring, tap 2 on the
  * same target commits. The hit map is the spec-03 32-px geometry:
  * Recruit rows stepper / Confirm / Deploy; Formation = 2 rows x 5
- * slot cards of 32 x 51 px, then the Deploy door. -1 = outside.         */
+ * slot cards of 32 x 51 px, then the Deploy door. -1 = outside.
+ * The header row is direct: a tab or Map acts on the first tap (none
+ * is irreversible), TOUCH_TAB0 / TOUCH_TAB1 / TOUCH_MAP.                 */
+#define TOUCH_TAB0 (-10)
+#define TOUCH_TAB1 (-11)
+#define TOUCH_MAP  (-12)
 static int touch_target(uint32_t value) {
 	const uint32_t px = (value >> 8) & 0xFFu;
 	const uint32_t py = value & 0xFFu;
-	if (py < 24u || py >= 128u) {
+	if (py < 24u) {
+		return px < 86u ? TOUCH_TAB0 : px < 168u ? TOUCH_TAB1 : TOUCH_MAP;
+	}
+	if (py >= 128u) {
 		return -1;
 	}
 	if (tab == 0) {
@@ -218,6 +227,19 @@ static int touch_target(uint32_t value) {
 void base_input(uint8_t kind, uint32_t value) {
 	if (kind == (uint8_t)UI_EVT_TOUCH) {
 		const int t = touch_target(value);
+		if (t == TOUCH_MAP) {
+			request = UI_SCREEN_CAMPAIGN; /* == B: the save boundary   */
+			return;
+		}
+		if (t == TOUCH_TAB0 || t == TOUCH_TAB1) {
+			const int want = (t == TOUCH_TAB0) ? 0 : 1;
+			if (tab != want) {
+				tab = want;
+				focus = 0;
+				last_touch = -1;
+			}
+			return;
+		}
 		if (t >= 0) {
 			if (t == last_touch) {
 				/* tap 2 on the same target: confirm (spec-01
@@ -262,18 +284,25 @@ ui_screen_t base_request(void) {
 }
 
 /* ---- art pass ----------------------------------------------------------- */
+/* row 0 (the tier) stays semantic: the tab row holds Map; the top plate
+ * shows the tier. Row 14 is laid out only while a status is said - the
+ * foot is the control legend otherwise.                               */
 static const ui_row_t BASE_ROWS[] = {
-	{0, RENDER_BOTTOM, 160, 8, 96, 1, RENDER_LINE},
 	{8, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK},
 	{2, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK}, /* Formation N/10 */
 	{7, RENDER_BOTTOM, 8, 150, 240, 1, RENDER_ACCENT},
-	{14, RENDER_BOTTOM, 8, 166, 240, 3, RENDER_INK},
+	{14, RENDER_BOTTOM, 8, 164, 240, 2, RENDER_INK},
 };
 /* the Recruit tab's chest row stays semantic only (painted below)     */
 static const ui_row_t BASE_ROWS_RECRUIT[] = {
-	{0, RENDER_BOTTOM, 160, 8, 96, 1, RENDER_LINE},
 	{8, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK},
-	{14, RENDER_BOTTOM, 8, 166, 240, 3, RENDER_INK},
+	{14, RENDER_BOTTOM, 8, 164, 240, 2, RENDER_INK},
+};
+static const guide_key_t BASE_KEYS[2][4] = {
+	{{"A", STR_KEY_SELECT}, {"<>", STR_KEY_TABS}, {"B", STR_KEY_BACK},
+	 {"START", STR_KEY_MENU}},
+	{{"A", STR_KEY_SWAP}, {"<>", STR_KEY_TABS}, {"B", STR_KEY_BACK},
+	 {"START", STR_KEY_MENU}},
 };
 
 /* company id -> the arm it marches as (4 arms, deterministic)         */
@@ -339,15 +368,23 @@ static void paint_top(const sim_snapshot_t *snap, uint8_t tier_now) {
 }
 
 static void paint_tabs(void) {
-	static const char *const TABS[2] = {"Recruit", "Formation"};
+	/* two tabs (d-pad Left/Right or a tap) and the way back to the map;
+	 * the open tab is paper with an accent rule, so it reads in grey  */
+	const char *const TABS[2] = {str(STR_TAB_RECRUIT), str(STR_TAB_FORMATION)};
 	for (int i = 0; i < 2; ++i) {
 		const int x = 6 + i * 82;
 		if (tab == i) {
 			render_rect(RENDER_BOTTOM, x, 4, 78, 18, RENDER_PAPER);
+			render_rect(RENDER_BOTTOM, x, 20, 78, 2, RENDER_ACCENT);
+		} else {
+			render_box(RENDER_BOTTOM, x, 4, 78, 18, RENDER_LINE);
 		}
-		render_text(RENDER_BOTTOM, x + 39 - render_text_width(TABS[i]) / 2, 8,
+		render_text(RENDER_BOTTOM, x + 39 - render_text_width(TABS[i]) / 2, 9,
 		            tab == i ? RENDER_INK : RENDER_LINE, TABS[i]);
 	}
+	char buf[16];
+	snprintf(buf, sizeof buf, "< %s (B)", str(STR_BASE_TO_MAP));
+	render_button(RENDER_BOTTOM, 172, 4, 78, 18, buf, RENDER_BTN_NORMAL);
 }
 
 static void paint_deploy_at(int x, int y, int w, int h, bool focused) {
@@ -384,7 +421,7 @@ static void paint(void) {
 		                RENDER_ANIM_IDLE, step, 14, 36, RENDER_SPR_FRONT);
 		render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES, RENDER_CLS_ARCHER,
 		                RENDER_ANIM_IDLE, step + 1u, 28, 36, RENDER_SPR_FRONT);
-		render_text(RENDER_BOTTOM, 50, 33, RENDER_INK, "Companies");
+		render_text(RENDER_BOTTOM, 50, 33, RENDER_INK, str(STR_BASE_RECRUIT_TITLE));
 		snprintf(buf, sizeof buf, "+%u = %lu g. Chest %u/%u.",
 		         SIM_PULSE_QTY, (unsigned long)cost, (unsigned)sim_chest(),
 		         SIM_CHEST_CAP);
@@ -449,6 +486,21 @@ static void paint(void) {
 	}
 }
 
+/* the NEXT plate over the camp and the chevron on the control it means */
+static void paint_guide(void) {
+	const char *next = guide_next_copy(true);
+	guide_next(RENDER_TOP, 118, next);
+	if (next == str(STR_NEXT_RECRUIT) && tab == 0) {
+		guide_point(RENDER_BOTTOM, 20, 76);
+	} else if (next == str(STR_NEXT_DEPLOY)) {
+		if (tab == 0) {
+			guide_point(RENDER_BOTTOM, 20, 108);
+		} else {
+			guide_point(RENDER_BOTTOM, 140, 113);
+		}
+	}
+}
+
 void base_frame(void) {
 	char line[80];
 	const sim_snapshot_t *snap = sim_snapshot();
@@ -460,12 +512,18 @@ void base_frame(void) {
 	tier_band_paint(tier_now);
 	if (tab == 0) {
 		ui_draw_layout(BASE_ROWS_RECRUIT, (uint8_t)(sizeof BASE_ROWS_RECRUIT /
-		                                            sizeof BASE_ROWS_RECRUIT[0]));
+		                                            sizeof BASE_ROWS_RECRUIT[0]) -
+		                                  (status_frames > 0 ? 0u : 1u));
 	} else {
-		ui_draw_layout(BASE_ROWS, (uint8_t)(sizeof BASE_ROWS / sizeof BASE_ROWS[0]));
+		ui_draw_layout(BASE_ROWS, (uint8_t)(sizeof BASE_ROWS / sizeof BASE_ROWS[0]) -
+		                              (status_frames > 0 ? 0u : 1u));
 	}
 	paint_top(snap, tier_now);
 	paint();
+	if (status_frames == 0) {
+		guide_legend(BASE_KEYS[tab & 1], 4u);
+	}
+	paint_guide();
 
 	/* tier band (24 px pixel geometry lands with B17; text now)          */
 	snprintf(line, sizeof line, "TIER %u - %s",

@@ -28,7 +28,6 @@ void queue_frame(uint32_t frame);
 
 static uint32_t frame_counter;
 static uint64_t wall_tick; /* last 10 Hz wall-clock stamp                */
-static uint8_t turn_ticks; /* sub-ticks into the running battle turn      */
 
 void loop_init(void) {
 	frame_counter = 0u;
@@ -71,9 +70,9 @@ void loop_start(void) {
 			 * muster also runs in Base (spec-03 R1/R4), battle
 			 * runs its own resolve next to the economy ticker. */
 			const ui_screen_t scr = ui_screen();
-			/* B22 (spec-04 T026): an open order panel or the boss
-			 * intro holds the tick AND the battle step - 0 catch-up
-			 * when it closes (10 s open = 0 ticks, 0 steps).        */
+			/* B22 (spec-04 T026): an open order panel, the pause or
+			 * the boss intro holds the tick AND the field - 0
+			 * catch-up when it closes (10 s open = 0 ticks).       */
 			const bool hold = ui_sim_hold();
 			uint8_t modes = 0u;
 			if (scr == UI_SCREEN_CAMPAIGN || scr == UI_SCREEN_BATTLE ||
@@ -91,9 +90,10 @@ void loop_start(void) {
 			const uint8_t subs = sim_speed();
 			const uint32_t sim_t0 = tickGetCount();
 			/* B20: n sub-steps per 10 Hz frame at the ACTIVE rate,
-			 * same turn rules (spec-04 R4, T017). The economy
-			 * naturally accumulates n ticks; each battle sub-step
-			 * is one turn, stopping at the seal.                  */
+			 * same field rules (spec-04 R4, T017). The economy
+			 * accumulates n ticks; each battle sub-step is one
+			 * real-time field tick (ADR-0008), stopping at the
+			 * seal: x4 is the same battle, four times as fast.   */
 			sim_step(subs);
 			if (scr == UI_SCREEN_BATTLE && !hold) {
 				for (uint8_t s = 0u; s < subs; ++s) {
@@ -101,13 +101,7 @@ void loop_start(void) {
 					    sim_battle_sealed()) {
 						break;
 					}
-					/* one turn per SIM_BATTLE_TICKS_PER_TURN
-					 * sub-ticks: x1 = 1 turn/s, x4 = 4 turns/s,
-					 * same turn rules at every rate (T017).  */
-					if (++turn_ticks >= SIM_BATTLE_TICKS_PER_TURN) {
-						turn_ticks = 0u;
-						sim_battle_step();
-					}
+					sim_battle_step();
 				}
 			}
 			/* B20: honest clamp (R5) - the measured sim slice

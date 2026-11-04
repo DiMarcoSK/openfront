@@ -34,12 +34,12 @@ root). Pinned by `static_assert` in `include/contracts/save.h`.
 | 4 | 4 | tick | — |
 | 8 | 4 | seed | 0 → 1 |
 | 12 | 4 | rng_state | 0 → 1 |
-| 16 | 6 | province_state | byte 0 = taken-front mask |
+| 16 | 6 | province_state | [0] taken-front mask, [1] lost (retake) mask, [2] relics earned, [3] threat kind (0 none, 1..5 = SIM_WAR_*; else dropped), [4] threat front (must be held, else dropped), [5] days left (0 or past the kind's own -> the kind's own) |
 | 22 | 1 | formation | — |
 | 23 | 2 | unit_count (roster) | ≤ 300 |
-| 25 | 12 | unit_type_aggregates[6] | [0] = roster |
+| 25 | 12 | unit_type_aggregates[6] | [0] = roster, [1] = battles won (era = won / 10) |
 | 37 | 1 | pending_reward (muster queue) | ≤ 20 and roster + queue ≤ 300 |
-| 38 | 24 | reserved | [0..1] chest (≤ 300, ≥ roster), [2] batch open, [3] in-battle marker (must be 0; non-zero is refused as mid-turn state) |
+| 38 | 24 | reserved | [0..1] chest (≤ 300, ≥ roster), [2] batch open, [3] in-battle marker (must be 0; non-zero is refused as mid-battle state), [4] calm days to the next threat (≤ 9), [5] wrath god + 1 (0 = none; bad -> Zeus), [6] wrath due (ADR-0009) |
 | 62 | 1 | selected_province | ≥ 8 → row 0, never VERIFY_FAIL |
 
 ## Commit protocol

@@ -77,7 +77,7 @@ int main(void) {
 	assert(sim_speed() == SIM_SPEED_X4);
 	assert(strcmp(sim_speed_badge(), "x4") == 0);
 
-	/* Sub-steps: 4 battle turns in one 10 Hz frame at x4 (T017).         */
+	/* Sub-steps: 4 field ticks in one 10 Hz frame at x4 (T017, ADR-0008). */
 	sim_set_run_mode(SIM_RUN_ECONOMY | SIM_RUN_MUSTER);
 	for (uint8_t i = 0u; i < 10u; ++i) {
 		sim_cmd_t c;
@@ -89,18 +89,17 @@ int main(void) {
 	}
 	sim_step(20u); /* 1 company in */
 	deploy();
-	assert(sim_battle_turn() == 0u);
+	assert(sim_battle_time() == 0u);
 	for (uint8_t s = 0u; s < SIM_SPEED_X4; ++s) {
 		if (!sim_battle_active() || sim_battle_sealed()) {
 			break;
 		}
 		sim_battle_step();
 	}
-	const uint8_t turn_after_one_frame = sim_battle_turn();
-	assert(turn_after_one_frame > 0u &&
-	       turn_after_one_frame <= SIM_SPEED_X4);
-	printf("test_speed: x4 frame consumed %u turn(s)\n",
-	       (unsigned)turn_after_one_frame);
+	const uint16_t ticks_after_one_frame = sim_battle_time();
+	assert(ticks_after_one_frame == SIM_SPEED_X4);
+	printf("test_speed: x4 frame ran %u field ticks\n",
+	       (unsigned)ticks_after_one_frame);
 
 	/* R5: the slice clamp - 4100 us > 4.0 ms downgrades one notch and
 	 * the copy is byte-exact (slice format one decimal).                 */

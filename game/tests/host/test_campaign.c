@@ -12,11 +12,13 @@
 #include "contracts/sim_api.h"
 #include "contracts/queue.h"
 #include "contracts/ui.h"
+#include "contracts/audio.h"
 #include "nds.h"
 #include "screens.h"
 #include "slots.h"
 
 /* ---- draw spy ------------------------------------------------------------ */
+void audio_cue(audio_cue_t cue) { (void)cue; } /* the threat cue: id only */
 static char drawn[24][80];
 
 void ui_draw_text(int x, int y, const char *txt) {

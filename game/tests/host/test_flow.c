@@ -16,6 +16,7 @@
 #include "contracts/queue.h"
 #include "nds.h"          /* libnds KEY_* masks (host stub mirrors)  */
 #include "screens.h"      /* campaign/base screen glue               */
+#include "guide.h"        /* B27 onboarding: the NEXT step           */
 
 /* campaign + base draw spy (both screens share ui_draw_text)            */
 static char drawn[24][80];
@@ -73,6 +74,18 @@ int main(void) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 	sim_init(1u);
 
+	/* B27 onboarding: a blank card names the next step on every screen,
+	 * and the step follows the state - no tutorial mode to get lost in */
+	ingest(0u, 1u);
+	assert(guide_front() == -1);
+	assert(strcmp(guide_next_copy(false), str(STR_NEXT_NEED_GOLD)) == 0);
+	ingest(600u, 1u);
+	assert(guide_front() >= 0);
+	assert(strcmp(guide_next_copy(false), str(STR_NEXT_PICK_FRONT)) == 0);
+	assert(strcmp(guide_next_copy(true), str(STR_NEXT_RECRUIT)) == 0);
+	printf("flow: blank card -> NEXT \"%s\" / Base \"%s\"\n",
+	       guide_next_copy(false), guide_next_copy(true));
+
 	uint32_t frame = 1u;
 	int run_debits = 0;
 	for (int run = 0; run < 20; ++run) {
@@ -119,6 +132,8 @@ int main(void) {
 		assert(exported.pending_reward == 10u);
 		assert(sim_chest() == 10u);
 		assert(taps == 3); /* 3 taps, 0 modals, everything inline    */
+		/* the NEXT plate moved on with the state: training, not idle */
+		assert(strcmp(guide_next_copy(true), str(STR_NEXT_MUSTER)) == 0);
 	}
 	printf("flow: 20/20 scripted 3-tap runs (front -> stepper -> "
 	       "confirm), %d front debits, muster live every run\n",

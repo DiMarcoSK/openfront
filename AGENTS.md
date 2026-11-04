@@ -12,7 +12,20 @@ the order panel, SaveStatus rows and Settings.
 - B27a (battle depth to GAME_DESIGN 7-8) is DONE: formations, terrain,
   morale, flanks, Rally/Charge, per-god omen/counter/wrath, relics,
   alerts; `make balance` gates it inside `make ci`.
-- Next up: **Phase 6 polish (B27-B31)**, then B32-B34 launch. Every
+- **The battle is REAL TIME (RTS auto-battle), never turns** (B27b,
+  ADR-0008, product-owner directive): `src/sim/field.c` moves divisions
+  in 3 lanes every 10 Hz tick; orders are live stances; A pauses. Do not
+  reintroduce turns, an order queue or End turn.
+- B27c (endless campaign, ADR-0009) is DONE: `src/sim/war.c` - threats on
+  held fronts with deadlines, retakes, eras, a god's wrath every 10 wins.
+- B27d is DONE: lanes follow the ground (`tools/art/lanes.py` ->
+  `art_terrain.h`, `render_lane_dy/_span`; never across rock or water)
+  and the fallen stay on the field (`ART_SQ_DEATH`). Changing a map in
+  `maps.py` re-solves its lanes; export fails if a lane has no path.
+- B27 is PARTIAL: `src/ui/strings.c` table + `guide.c` (control legend,
+  NEXT plate, pointer). Next up: **finish B27 (move the spec copy into
+  the table, 7x5 state fixtures)**, then B28-B31 polish,
+  then B32-B34 launch. Every
   hardware number from phases 4-5 is collected in **B33**.
 - `make ci` is the blocking job (rom 0 warnings, gates, host suites,
   budget, contrast, POC, grayscale) - run it before calling anything done.
@@ -23,7 +36,7 @@ the order panel, SaveStatus rows and Settings.
 
 The status of every item - with acceptance evidence - is inside
 `cases/nintendo-ds-strategy-tycoon-incremental/BACKLOG.md` (each item
-carries a `> **STATUS ...**` line right below the checkbox). The 7 ADRs
+carries a `> **STATUS ...**` line right below the checkbox). The 9 ADRs
 live in the same folder under `adr/`, the SDD in `SDD.md`.
 
 ## Where the work happens

@@ -116,6 +116,10 @@ void render_begin(void);
 void render_backdrop(render_screen_t s, uint8_t backdrop, uint8_t god);
 void render_camera(int x, int y);   /* scroll of a top MAP_* backdrop   */
 void render_flash(uint8_t level);   /* top brightness 0..16 (bolt flash) */
+/* the ground of a MAP_* field (additive, art_terrain.h): the y offset a
+ * lane walks at map x round rock and water, and the x span it can walk */
+int  render_lane_dy(uint8_t backdrop, uint8_t lane, int x);
+void render_lane_span(uint8_t backdrop, uint8_t lane, int *x0, int *x1);
 
 /* overlay drawing (pixel coordinates, 256x192 per screen)                */
 int  render_text(render_screen_t s, int x, int y, uint8_t color,

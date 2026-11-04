@@ -149,7 +149,61 @@ def general_frame(civ, anim, f) -> Canvas:
     return cv
 
 
+# The fallen (GAME_DESIGN 4: death animations; 7: casualties you can see).
+# Three frames: struck (the men drop to a knee), falling (pitched over)
+# and down (lying flat, weapon dropped). The battle view plays the first
+# two where a company falls and leaves the last on the ground, so a field
+# fills with the dead of the fight that crossed it.
+FALLEN = [(3, 15), (12, 11), (19, 15), (26, 12)]
+
+
+def fallen_frame(civ, cls, f) -> Canvas:
+    K = units.keys(civ)
+    cv = Canvas(32, 16)
+    if cls == "cavalry":
+        for n, (x, y) in enumerate(FALLEN[::2]):
+            x += n * 4
+            if f < 2:
+                rows = [r[::-1] for r in HORSE[0 if f == 0 else 2]]
+                cv.sprite(rows, dict(K, c=K["W"]), x, y - 4 + f * 2)
+                cv.sprite(BODY[civ][:4], K, x + 2 + f * 2, y - 9 + f * 3)
+            else:
+                # the horse on its side, legs out; the rider thrown clear
+                cv.fill(cv.ellipse(x + 5, y - 1.5, 5, 1.6), K["W"])
+                for lx in (x + 2, x + 4, x + 6, x + 8):
+                    cv.line(lx, y - 3, lx + 1, y - 5, K["W"])
+                cv.put(x + 10, y - 2, K["w"])
+                cv.sprite(["hcs", "hcs"], K, x + 11, y - 1)
+                cv.line(x - 1, y - 6, x + 4, y - 7, K["W"])
+        _shadow_outline(cv, K)
+        return cv
+    body = BODY[civ] if cls != "archer" else archer_body(civ)
+    for n, (x, y) in enumerate(FALLEN):
+        if f == 0:
+            # struck: down on one knee, the head bowed a pixel
+            cv.sprite(body[1:6], K, x, y - 5)
+            cv.sprite([".ss.."], K, x, y)
+        elif f == 1:
+            # falling: pitched back on a diagonal, the weapon flying
+            for i, (dx, dy, k) in enumerate(((0, -4, "h"), (1, -3, "h"), (1, -2, "c"),
+                                             (2, -2, "c"), (2, -1, "c"), (3, -1, "s"),
+                                             (4, 0, "s"))):
+                cv.put(x + dx, y + dy, K[k])
+            cv.line(x + 3, y - 7, x + 6, y - 5, K["W"])
+        else:
+            # down: flat on the ground; spear or bow beside, a shield rim
+            cv.sprite(["hhccss.", "Lhcccss"], K, x - 1, y - 1)
+            if n % 2:
+                cv.line(x - 2, y - 3, x + 5, y - 4, K["W"])
+            else:
+                cv.put(x + 6, y - 2, K["m"])
+                cv.put(x + 7, y - 2, K["m"])
+    _shadow_outline(cv, K)
+    return cv
+
+
 ANIMS = {"idle": 2, "walk": 4, "attack": 3}
+FALLEN_FRAMES = 3
 
 
 def squad_sheet(civ, cls) -> tuple:
@@ -163,6 +217,9 @@ def squad_sheet(civ, cls) -> tuple:
                     frames.append(cavalry_frame(civ, a, f, s))
                 else:
                     frames.append(squad_frame(civ, cls, a, f, s))
+    # one set of the fallen for every strength: the dead are not thinned
+    index["death"] = (len(frames), FALLEN_FRAMES)
+    frames += [fallen_frame(civ, cls, f) for f in range(FALLEN_FRAMES)]
     cv = Canvas(32 * len(frames), 16)
     for i, fr in enumerate(frames):
         cv.paste(fr, i * 32, 0)

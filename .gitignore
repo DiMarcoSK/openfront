@@ -27,3 +27,4 @@ cases/*/raw
 
 # python bytecode
 __pycache__/
+*.sav

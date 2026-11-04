@@ -66,6 +66,7 @@ typedef enum save_status {
 	SAVE_STATUS_NO_CARD,
 	SAVE_STATUS_VERIFY_FAIL,
 	SAVE_STATUS_FULL,
+	SAVE_STATUS_SAVING,   /* additive B24: a commit is in flight         */
 } save_status_t;
 
 typedef enum save_backend_kind {
@@ -148,5 +149,53 @@ uint32_t save_commit_seq(void);
  * CRC-32 so the rollback image loads in the frozen v1 reader.            */
 void save_encode_v1(const save_aggregate_t *snap, uint32_t seq,
                     uint16_t day, uint8_t out[170]);
+
+/* ---- additive B24: inline SaveStatus (spec-06 T018-T023) ---------------
+ * One transition table owns every status change; the module and the
+ * host test read the same function (spec-06 T018).                       */
+typedef enum save_event {
+	SAVE_EV_BOOT_NO_HW = 0,   /* probe found no save hardware            */
+	SAVE_EV_BOOT_VERIFIED,    /* >= 1 slot passed CRC                    */
+	SAVE_EV_BOOT_BLANK,       /* both slots never written                */
+	SAVE_EV_BOOT_DAMAGED,     /* bytes present, 0 slots verified         */
+	SAVE_EV_COMMIT_BEGIN,
+	SAVE_EV_COMMIT_OK,
+	SAVE_EV_COMMIT_FAIL,      /* write-and-verify failed twice           */
+	SAVE_EV_COMMIT_NO_HW,
+	SAVE_EV_ERASE,
+	SAVE_EV_UNDO,
+	SAVE_EV_COUNT,
+} save_event_t;
+
+save_status_t save_status_next(save_status_t cur, save_event_t ev);
+
+#define SAVE_COMMIT_ATTEMPTS 2u   /* R7: 2 attempts then FULL            */
+#define SAVE_CORE_BYTES 340u      /* 2 x 170 B slots, the Erase hold     */
+#define SAVE_UNDO_FRAMES 300u     /* "Undo 5 s" at 60 Hz                 */
+
+/* The last commit as the status row reads it (seq + slot + day +
+ * treasury + attempts of the latest try; ok = it verified).              */
+typedef struct save_commit_info {
+	uint32_t seq;
+	uint32_t treasury;
+	uint16_t day;
+	uint8_t slot;        /* 0..1, 0xFF before the first commit          */
+	uint8_t attempts;    /* writes spent by the latest try (0..2)       */
+	uint8_t ok;
+	uint8_t tried;       /* a commit ran in this boot                   */
+} save_commit_info_t;
+
+void save_last_commit(save_commit_info_t *out);
+
+/* save_retry(): the Settings "Retry save" - one fresh try (2 attempts)
+ * of the last staged aggregate; the only way out of FULL (R7).           */
+save_status_t save_retry(void);
+
+/* Erase = Undo 5 s: save_erase() holds both 340 B images in RAM and
+ * blanks the slots; save_erase_undo() writes them back while the hold
+ * lives; save_erase_settle() drops the hold when the 5 s run out.        */
+bool save_erase_undo(void);
+void save_erase_settle(void);
+bool save_erase_pending(void);
 
 #endif /* WAR_TABLE_SAVE_H_V1 */

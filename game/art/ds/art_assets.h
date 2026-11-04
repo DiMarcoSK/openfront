@@ -19,6 +19,18 @@
 #include "card_kronos.h"
 #include "card_poseidon.h"
 #include "card_zeus.h"
+#include "frame_battle_arena_ares.h"
+#include "frame_battle_arena_hades.h"
+#include "frame_battle_arena_kronos.h"
+#include "frame_battle_arena_poseidon.h"
+#include "frame_battle_arena_zeus.h"
+#include "frame_battle_desert.h"
+#include "frame_battle_highlands.h"
+#include "frame_battle_plains.h"
+#include "frame_result_loss.h"
+#include "frame_result_win.h"
+#include "frame_sheet.h"
+#include "frame_title.h"
 #include "map_arena.h"
 #include "map_desert.h"
 #include "map_highlands.h"
@@ -107,6 +119,18 @@ enum {
 	ART_BG_CARD_KRONOS,
 	ART_BG_CARD_POSEIDON,
 	ART_BG_CARD_ZEUS,
+	ART_BG_FRAME_BATTLE_ARENA_ARES,
+	ART_BG_FRAME_BATTLE_ARENA_HADES,
+	ART_BG_FRAME_BATTLE_ARENA_KRONOS,
+	ART_BG_FRAME_BATTLE_ARENA_POSEIDON,
+	ART_BG_FRAME_BATTLE_ARENA_ZEUS,
+	ART_BG_FRAME_BATTLE_DESERT,
+	ART_BG_FRAME_BATTLE_HIGHLANDS,
+	ART_BG_FRAME_BATTLE_PLAINS,
+	ART_BG_FRAME_RESULT_LOSS,
+	ART_BG_FRAME_RESULT_WIN,
+	ART_BG_FRAME_SHEET,
+	ART_BG_FRAME_TITLE,
 	ART_BG_MAP_ARENA,
 	ART_BG_MAP_DESERT,
 	ART_BG_MAP_HIGHLANDS,
@@ -192,6 +216,18 @@ static const art_bg_t ART_BG[ART_BG_COUNT] = {
 	{card_kronosTiles, card_kronosTilesLen, card_kronosMap, card_kronosMapLen, card_kronosPal, card_kronosPalLen, 8},
 	{card_poseidonTiles, card_poseidonTilesLen, card_poseidonMap, card_poseidonMapLen, card_poseidonPal, card_poseidonPalLen, 8},
 	{card_zeusTiles, card_zeusTilesLen, card_zeusMap, card_zeusMapLen, card_zeusPal, card_zeusPalLen, 8},
+	{frame_battle_arena_aresTiles, frame_battle_arena_aresTilesLen, frame_battle_arena_aresMap, frame_battle_arena_aresMapLen, frame_battle_arena_aresPal, frame_battle_arena_aresPalLen, 8},
+	{frame_battle_arena_hadesTiles, frame_battle_arena_hadesTilesLen, frame_battle_arena_hadesMap, frame_battle_arena_hadesMapLen, frame_battle_arena_hadesPal, frame_battle_arena_hadesPalLen, 8},
+	{frame_battle_arena_kronosTiles, frame_battle_arena_kronosTilesLen, frame_battle_arena_kronosMap, frame_battle_arena_kronosMapLen, frame_battle_arena_kronosPal, frame_battle_arena_kronosPalLen, 8},
+	{frame_battle_arena_poseidonTiles, frame_battle_arena_poseidonTilesLen, frame_battle_arena_poseidonMap, frame_battle_arena_poseidonMapLen, frame_battle_arena_poseidonPal, frame_battle_arena_poseidonPalLen, 8},
+	{frame_battle_arena_zeusTiles, frame_battle_arena_zeusTilesLen, frame_battle_arena_zeusMap, frame_battle_arena_zeusMapLen, frame_battle_arena_zeusPal, frame_battle_arena_zeusPalLen, 8},
+	{frame_battle_desertTiles, frame_battle_desertTilesLen, frame_battle_desertMap, frame_battle_desertMapLen, frame_battle_desertPal, frame_battle_desertPalLen, 8},
+	{frame_battle_highlandsTiles, frame_battle_highlandsTilesLen, frame_battle_highlandsMap, frame_battle_highlandsMapLen, frame_battle_highlandsPal, frame_battle_highlandsPalLen, 8},
+	{frame_battle_plainsTiles, frame_battle_plainsTilesLen, frame_battle_plainsMap, frame_battle_plainsMapLen, frame_battle_plainsPal, frame_battle_plainsPalLen, 8},
+	{frame_result_lossTiles, frame_result_lossTilesLen, frame_result_lossMap, frame_result_lossMapLen, frame_result_lossPal, frame_result_lossPalLen, 8},
+	{frame_result_winTiles, frame_result_winTilesLen, frame_result_winMap, frame_result_winMapLen, frame_result_winPal, frame_result_winPalLen, 8},
+	{frame_sheetTiles, frame_sheetTilesLen, frame_sheetMap, frame_sheetMapLen, frame_sheetPal, frame_sheetPalLen, 8},
+	{frame_titleTiles, frame_titleTilesLen, frame_titleMap, frame_titleMapLen, frame_titlePal, frame_titlePalLen, 8},
 	{map_arenaTiles, map_arenaTilesLen, map_arenaMap, map_arenaMapLen, map_arenaPal, map_arenaPalLen, 8},
 	{map_desertTiles, map_desertTilesLen, map_desertMap, map_desertMapLen, map_desertPal, map_desertPalLen, 8},
 	{map_highlandsTiles, map_highlandsTilesLen, map_highlandsMap, map_highlandsMapLen, map_highlandsPal, map_highlandsPalLen, 8},

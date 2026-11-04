@@ -160,19 +160,18 @@ static battle_outcome_t run_battle(void) {
 	printf("battle: Continue 1 apply; 2nd press idempotent\n");
 
 	/* R6: Retry = frame 0 of the same seed, 0 resource change            */
+	const uint16_t deploy_roster = sim_roster(); /* the pre-battle state */
 	assert(enqueue_cmd(4u, 3u));
 	dispatch_all();
 	while (sim_battle_active()) sim_battle_step();
 	const battle_outcome_t seal2 = run_battle();
 	(void)seal2;
 	const uint32_t retry_treasury = sim_snapshot()->treasury;
-	const uint8_t retry_roster = sim_roster();
 	assert(sim_result_retry() == SIM_OK);
 	assert(sim_battle_active() && !sim_battle_sealed());
 	assert(sim_battle_turn() == 0u);
 	assert(sim_snapshot()->treasury == retry_treasury); /* 0 change     */
-	assert(sim_roster() == retry_roster);
-	/* determinism across the restart: attempt 2 frame 5 == attempt 1     */
+	assert(sim_roster() == deploy_roster); /* the fallen come back     */
 	/* determinism across the restart: attempt 2 == attempt 1 byte-exact  */
 	while (sim_battle_active()) {
 		sim_battle_step();
@@ -224,7 +223,7 @@ static battle_outcome_t run_battle(void) {
 		assert(sim_snapshot()->treasury == applied_treasury);
 		assert(sim_roster() == applied_roster);
 		assert(sim_roster() == outcome.units_after);
-		assert(sim_front_taken(outcome.province_id));
+		assert(sim_front_taken(outcome.province_id) == (outcome.result == 1u));
 	}
 	printf("battle: 10/10 reboot restores the same run state\n");
 

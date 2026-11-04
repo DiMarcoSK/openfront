@@ -14,8 +14,10 @@
 #include "contracts/sim_api.h"
 #include "contracts/trace.h"
 #include "contracts/ui.h"
+#include "contracts/render.h"
 
 #include "ui_draw.h"
+#include "screens.h"
 #include "title.h"
 
 /* ---- state ------------------------------------------------------------- */
@@ -135,6 +137,14 @@ static void resolve_state(void) {
 	set_focus(default_focus_target());
 }
 
+/* title_refresh(): re-read the cards after Settings changed the card
+ * (Erase, Undo, Retry); the LOADING skeleton is not replayed.            */
+void title_refresh(void) {
+	if (state != TITLE_LOADING) {
+		resolve_state();
+	}
+}
+
 void title_init(void) {
 	state = TITLE_LOADING;
 	scan_pending = true;
@@ -183,16 +193,23 @@ bool title_handoff(int slot) {
 static int touch_target(uint32_t value) {
 	const uint32_t px = (value >> 8) & 0xFFu;
 	const uint32_t py = value & 0xFFu;
-	/* spec-01 6.2 fixed geometry: 2 x 128 x 32 cards at y 24; action row
-	 * 112x32 primary at x 8 / secondary at x 136, y 64.                   */
-	if (py >= 24u && py < 56u) {
-		return (px < 128u) ? 0 : 1;
+	/* frame_title geometry (art pass): 2 x 116 x 76 cards at y 30
+	 * (x 8 / x 132), action row 116 x 20 at y 116 - every target >= 32 px
+	 * tall with its 8 px apron (spec-01 6.2, constitution 7).            */
+	if (py >= 26u && py < 110u) {
+		if (px >= 4u && px < 128u) {
+			return 0;
+		}
+		if (px >= 128u && px < 252u) {
+			return 1;
+		}
+		return -1;
 	}
-	if (py >= 64u && py < 96u) {
-		if (px >= 8u && px < 120u) {
+	if (py >= 110u && py < 142u) {
+		if (px >= 4u && px < 128u) {
 			return 2; /* primary                                            */
 		}
-		if (px >= 136u && px < 248u) {
+		if (px >= 128u && px < 252u) {
 			return 3; /* secondary                                          */
 		}
 	}
@@ -325,8 +342,90 @@ static void draw_cards(char buf[80]) {
 	}
 }
 
+/* ---- art pass: the rows on the art, the cards and buttons painted ------- */
+static const ui_row_t TITLE_ROWS[] = {
+	{2, RENDER_TOP, 16, 10, 224, 1, RENDER_BRONZE_L},
+	{3, RENDER_TOP, 16, 20, 224, 1, RENDER_LINE},
+	{5, RENDER_BOTTOM, 104, 8, 148, 1, RENDER_LINE},
+	{10, RENDER_BOTTOM, 8, 146, 240, 1, RENDER_INK},
+	{14, RENDER_BOTTOM, 8, 146, 240, 2, RENDER_INK},
+	{15, RENDER_BOTTOM, 8, 155, 240, 1, RENDER_INK},
+	{16, RENDER_BOTTOM, 8, 164, 240, 1, RENDER_INK},
+	{17, RENDER_BOTTOM, 6, 184, 248, 1, RENDER_LINE},
+};
+
+static void paint_card(int i, int x, int y) {
+	char buf[24];
+	const bool f = (focus == i);
+	const uint32_t step = ui_anim_step();
+	snprintf(buf, sizeof buf, "Slot %d", i + 1);
+	if (cards[i].valid) {
+		render_text(RENDER_BOTTOM, x + 10, y + 10,
+		            f ? RENDER_ACCENT : RENDER_INK, buf);
+		snprintf(buf, sizeof buf, "Day %u", (unsigned)cards[i].day);
+		render_text(RENDER_BOTTOM, x + 64, y + 10, RENDER_INK2, buf);
+		render_text(RENDER_BOTTOM, x + 10, y + 24, RENDER_INK2, "Treasury");
+		snprintf(buf, sizeof buf, "%lu", (unsigned long)cards[i].treasury);
+		render_text_big(RENDER_BOTTOM, x + 10, y + 34, RENDER_INK, buf);
+		render_text(RENDER_BOTTOM, x + 10, y + 58, RENDER_INK2, "Hellenes");
+		render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES,
+		                RENDER_CLS_SPEAR, RENDER_ANIM_IDLE, step + (unsigned)i,
+		                x + 78, y + 50, RENDER_SPR_FRONT);
+		render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES,
+		                RENDER_CLS_SPEAR, RENDER_ANIM_IDLE, step + 1u,
+		                x + 92, y + 50, RENDER_SPR_FRONT);
+		render_icon(RENDER_BOTTOM, RENDER_ICON_GOLD, x + 92, y + 32,
+		            RENDER_SPR_FRONT);
+	} else if (cards[i].blank) {
+		render_text(RENDER_BOTTOM, x + 10, y + 10, RENDER_INK2, buf);
+		render_text(RENDER_BOTTOM, x + 10, y + 28, RENDER_INK2, "Empty");
+		render_text(RENDER_BOTTOM, x + 10, y + 40, RENDER_INK2,
+		            "Never written.");
+	} else {
+		/* T020: the damaged stamp = pin SHAPE + word, never colour */
+		render_text(RENDER_BOTTOM, x + 10, y + 10, RENDER_CRIT, buf);
+		render_pin(RENDER_BOTTOM, 3u, x + 92, y + 6, RENDER_SPR_FRONT);
+		render_text(RENDER_BOTTOM, x + 10, y + 28, RENDER_CRIT,
+		            "!! DAMAGED");
+		render_text(RENDER_BOTTOM, x + 10, y + 40, RENDER_INK2,
+		            "Unreadable.");
+		render_text(RENDER_BOTTOM, x + 10, y + 52, RENDER_INK2,
+		            "Kept for Erase.");
+	}
+	if (f) {
+		render_ring(RENDER_BOTTOM, x, y, 116, 76);
+	}
+}
+
+static void paint(void) {
+	render_backdrop(RENDER_TOP, RENDER_BD_TITLE_TOP, RENDER_GOD_NONE);
+	render_backdrop(RENDER_BOTTOM, RENDER_BD_FRAME_TITLE, RENDER_GOD_NONE);
+	/* top: the focused-slot sheet + the B24 SaveStatus row             */
+	render_panel(RENDER_TOP, 8, 4, 240, 50, RENDER_PANEL_IRON);
+	save_row_paint(RENDER_TOP, SAVE_ROW_TITLE, 16, 31, 224);
+	render_text(RENDER_BOTTOM, 8, 8, RENDER_BRONZE_L, "FIELD LEDGER");
+	if (state == TITLE_LOADING) {
+		return;
+	}
+	for (int i = 0; i < 2; ++i) {
+		paint_card(i, 8 + i * 124, 30);
+	}
+	const bool cont = title_default_slot() >= 0;
+	render_button(RENDER_BOTTOM, 8, 116, 116, 20,
+	              cont ? "Continue" : "New Campaign",
+	              focus == 2 ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+	render_button(RENDER_BOTTOM, 132, 116, 116, 20, "Settings",
+	              focus == 3 ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+	if (focus >= 2) {
+		render_ring(RENDER_BOTTOM, focus == 2 ? 8 : 132, 116, 116, 20);
+	}
+}
+
 void title_frame(void) {
 	char buf[80];
+
+	ui_draw_layout(TITLE_ROWS, (uint8_t)(sizeof TITLE_ROWS / sizeof TITLE_ROWS[0]));
+	paint();
 
 	/* The scan runs between frames so the skeleton is shown first (R8);
 	 * it is read-only: the title never writes to the card (spec-01).       */

@@ -4,6 +4,9 @@
 
 #include "save_backend.h"
 
+/* the two 170 B slots sit at 170 and 340 (0..169 = the reserved third) */
+#define SLOT_REGION_OFF 170u
+
 bool slot_decode(const uint8_t *image, save_slot_t *out);
 bool slot_decode_index(const uint8_t block[512], int idx, save_slot_t *out);
 bool slot_info(const uint8_t block[512], int idx, save_slot_info_t *out);

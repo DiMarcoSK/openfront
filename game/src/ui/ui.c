@@ -89,10 +89,26 @@ uint8_t ui_selected_row(void) {
 	return (current == UI_SCREEN_CAMPAIGN) ? campaign_focus_row() : 0xFFu;
 }
 
+bool ui_sim_hold(void) {
+	return current == UI_SCREEN_BATTLE && battle_holds();
+}
+
 void ui_input(uint8_t kind, uint32_t value) {
+	/* B24: START opens Settings from any host screen (spec-06 6.4);
+	 * the title routes its own Settings action below.                  */
+	if (kind == (uint8_t)UI_EVT_KEY && (value & KEY_START) &&
+	    current != UI_SCREEN_TITLE && current != UI_SCREEN_SETTINGS) {
+		settings_open(current);
+		return;
+	}
 	switch (current) {
 	case UI_SCREEN_TITLE:
-		title_input(kind, value);
+		if (title_input(kind, value) == TITLE_ACT_SETTINGS) {
+			settings_open(UI_SCREEN_TITLE);
+		}
+		return;
+	case UI_SCREEN_SETTINGS:
+		settings_input(kind, value);
 		return;
 	case UI_SCREEN_CAMPAIGN:
 		campaign_input(kind, value);
@@ -107,7 +123,7 @@ void ui_input(uint8_t kind, uint32_t value) {
 		result_input(kind, value);
 		return;
 	default:
-		break; /* Settings content ships with B24 */
+		break;
 	}
 }
 
@@ -139,6 +155,7 @@ void ui_frame(void) {
 		return;
 	}
 	bench_frame_hash();
+	ui_anim_tick();
 
 	switch (current) {
 	case UI_SCREEN_TITLE:
@@ -167,6 +184,9 @@ void ui_frame(void) {
 			if (r != UI_SCREEN_NONE) {
 				/* The Base exit is the coalesced save boundary
 				 * (spec-02 T012); the write lands in Campaign. */
+				if (r == UI_SCREEN_BATTLE) {
+					battle_enter(true); /* boss intro once */
+				}
 				ui_set_screen(r);
 			}
 		}
@@ -184,19 +204,36 @@ void ui_frame(void) {
 
 	case UI_SCREEN_RESULT:
 		result_frame();
-		if (sim_outcome_applied()) {
-			/* Continue applied: back to Campaign, changed row
-			 * focused (spec-05 R4).                                */
+		if (result_request() == UI_SCREEN_CAMPAIGN) {
+			/* Continue applied + its commit row read: back to
+			 * Campaign, changed row focused (spec-05 R4).          */
 			enter_campaign();
 		} else if (!sim_battle_sealed() && sim_battle_active()) {
 			/* Retry accepted: back to the live battle (R6).        */
+			battle_enter(false);
 			ui_set_screen(UI_SCREEN_BATTLE);
 		}
 		overlay_frame();
 		return;
 
+	case UI_SCREEN_SETTINGS:
+		settings_frame();
+		{
+			const ui_screen_t r = settings_request();
+			if (r == UI_SCREEN_TITLE) {
+				title_refresh(); /* an Erase / Retry re-reads */
+				ui_set_screen(r);
+			} else if (r == UI_SCREEN_CAMPAIGN) {
+				enter_campaign();
+			} else if (r != UI_SCREEN_NONE) {
+				ui_set_screen(r);
+			}
+		}
+		overlay_frame();
+		return;
+
 	default:
-		overlay_frame(); /* Settings: B24 */
+		overlay_frame();
 		break;
 	}
 }

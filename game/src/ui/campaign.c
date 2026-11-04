@@ -12,6 +12,7 @@
 #include "contracts/sim_api.h"
 #include "contracts/save.h"
 #include "contracts/ui.h"
+#include "contracts/render.h"
 
 #include "ui_draw.h"
 #include "screens.h"
@@ -50,6 +51,21 @@ void campaign_focus_province(uint8_t province) {
 }
 
 void campaign_input(uint8_t kind, uint32_t value) {
+	if (kind == (uint8_t)UI_EVT_TOUCH) {
+		/* art pass: 8 rows of 17 px from y 26; tap 1 rings the row,
+		 * tap 2 on the same row is the A press (spec-01 6.5 pattern). */
+		const int py = (int)(value & 0xFFu);
+		if (py < 26 || py >= 26 + 17 * (int)SIM_FRONT_COUNT) {
+			return;
+		}
+		const int row = (py - 26) / 17;
+		if (row != focus) {
+			focus = row;
+			return;
+		}
+		kind = (uint8_t)UI_EVT_KEY;
+		value = KEY_A;
+	}
 	if (kind == (uint8_t)UI_EVT_KEY) {
 		const uint32_t keys = value;
 		if (keys & KEY_UP) {
@@ -130,6 +146,118 @@ uint8_t campaign_focus_row(void) {
 	           : 0xFFu;
 }
 
+/* ---- art pass ----------------------------------------------------------- */
+#define ROW_Y0 26
+#define ROW_H 17
+
+static const ui_row_t CAMPAIGN_ROWS[] = {
+	{0, RENDER_BOTTOM, 8, 8, 244, 1, RENDER_BRONZE_L},
+	{12, RENDER_BOTTOM, 8, 166, 244, 3, RENDER_INK},
+};
+
+static const char *const THREAT_WORD[4] = {"Low", "Medium", "High", "Critical"};
+static const char *const CIV_WORD[RENDER_CIVS] = {
+	"Hellenes", "Rome", "Carthage", "Assyria",
+};
+
+/* the focused front on the top screen: its field, its enemy line (or
+ * its god) and a plate with the five fields of the row (spec-02 R1)    */
+static int pan;
+static void paint_top(const sim_province_record_t *r, uint8_t i) {
+	char buf[48];
+	const front_art_t *a = front_art(i);
+	const uint32_t step = ui_anim_step();
+	render_backdrop(RENDER_TOP, a->map, a->god);
+	pan = (pan + 1) % 1024;
+	const int cx = 96 + (pan < 512 ? pan : 1024 - pan) / 4;
+	render_camera(cx, 150);
+	/* the holder of the front, framed above the plate (screen coords) */
+	const bool taken = sim_front_taken(i);
+	const bool divine = a->god != RENDER_GOD_NONE && !taken;
+	if (divine) {
+		render_god(a->god, RENDER_GOD_IDLE, step, 64, 2, RENDER_SPR_FLIP);
+	}
+	for (int k = 0; k < (divine ? 4 : 8); ++k) {
+		const int x = (divine ? 150 : 60) + (k % 4) * 34 - (k / 4) * 10;
+		const int y = (divine ? 104 : 70) + (k / 4) * 20;
+		render_squad(taken ? RENDER_CIV_HELLENES : a->enemy,
+		             (k % 4 == 3) ? RENDER_CLS_CAVALRY : RENDER_CLS_SPEAR,
+		             0u, RENDER_ANIM_IDLE, step + (uint32_t)k, x, y,
+		             taken ? 0u : RENDER_SPR_FLIP);
+	}
+	if (!divine) {
+		render_squad(taken ? RENDER_CIV_HELLENES : a->enemy,
+		             RENDER_CLS_GENERAL, 0u, 2u, step, 210, 48,
+		             taken ? 0u : RENDER_SPR_FLIP);
+	}
+	render_panel(RENDER_TOP, 8, 132, 240, 54, RENDER_PANEL_IRON);
+	render_pin(RENDER_TOP, r->threat, 16, 140, RENDER_SPR_FRONT);
+	render_text_big(RENDER_TOP, 36, 139, RENDER_BRONZE_L, r->name);
+	snprintf(buf, sizeof buf, "Threat %s. Cost %u g, reward +%u g.",
+	         THREAT_WORD[r->threat & 3u], (unsigned)r->cost,
+	         (unsigned)r->reward);
+	render_text(RENDER_TOP, 16, 160, RENDER_LINE, buf);
+	if (taken) {
+		snprintf(buf, sizeof buf, "Taken. Your banner holds it.");
+	} else if (a->god != RENDER_GOD_NONE) {
+		snprintf(buf, sizeof buf, "%s holds this front.", god_name(a->god));
+		render_relic(RENDER_TOP, a->god, 226, 140, RENDER_SPR_FRONT);
+	} else {
+		snprintf(buf, sizeof buf, "%s holds this front.",
+		         CIV_WORD[a->enemy % RENDER_CIVS]);
+	}
+	render_text(RENDER_TOP, 16, 170, RENDER_SURFACE, buf);
+	/* the ground and the stake: what to prepare for (GAME_DESIGN 7-8)  */
+	{
+		const uint8_t boss = sim_front_boss(i);
+		char rb[56];
+		if (boss != SIM_BOSS_NONE && !taken) {
+			snprintf(rb, sizeof rb, "Relic %s: %s", sim_relic_name(boss),
+			         sim_relic_brief(boss));
+		} else {
+			snprintf(rb, sizeof rb, "%s: %s",
+			         sim_terrain_name(sim_front_terrain(i)),
+			         sim_terrain_brief(sim_front_terrain(i)));
+		}
+		render_text(RENDER_TOP, 16, 178, RENDER_LINE, rb);
+	}
+}
+
+static void paint(const sim_snapshot_t *snap, const sim_province_record_t *tab) {
+	char buf[24];
+	render_backdrop(RENDER_BOTTOM, RENDER_BD_FRAME_SHEET, RENDER_GOD_NONE);
+	paint_top(&tab[focus], (uint8_t)focus);
+	for (int i = 0; i < (int)SIM_FRONT_COUNT; ++i) {
+		const sim_province_record_t *r = &tab[i];
+		const int y = ROW_Y0 + i * ROW_H;
+		const bool f = (focus == i);
+		render_rect(RENDER_BOTTOM, 4, y, 248, ROW_H - 1,
+		            f ? RENDER_SURFACE : RENDER_PAPER);
+		render_rect(RENDER_BOTTOM, 4, y + ROW_H - 1, 248, 1, RENDER_LINE);
+		render_pin(RENDER_BOTTOM, r->threat, 6, y, RENDER_SPR_FRONT);
+		render_text(RENDER_BOTTOM, 26, y + 5, RENDER_INK, r->name);
+		snprintf(buf, sizeof buf, "%ug", (unsigned)r->cost);
+		render_text(RENDER_BOTTOM, 100, y + 5, RENDER_INK2, buf);
+		snprintf(buf, sizeof buf, "+%u", (unsigned)r->reward);
+		render_text(RENDER_BOTTOM, 136, y + 5, RENDER_ACCENT, buf);
+		if (sim_front_taken((uint8_t)i)) {
+			render_text(RENDER_BOTTOM, 188, y + 5, RENDER_INK2, "Taken");
+		} else if (snap->treasury >= r->cost) {
+			render_button(RENDER_BOTTOM, 180, y + 1, 70, 14, "Recruit",
+			              f ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+		} else {
+			snprintf(buf, sizeof buf, "Need %u",
+			         (unsigned)(r->cost - snap->treasury));
+			render_button(RENDER_BOTTOM, 180, y + 1, 70, 14, buf,
+			              RENDER_BTN_DISABLED);
+		}
+		if (f) {
+			render_ring(RENDER_BOTTOM, 4, y, 248, ROW_H - 1);
+		}
+	}
+	render_icon(RENDER_BOTTOM, RENDER_ICON_GOLD, 232, 3, RENDER_SPR_FRONT);
+}
+
 void campaign_frame(void) {
 	char line[80];
 	char action[16];
@@ -143,6 +271,10 @@ void campaign_frame(void) {
 			confirm_locked = false;
 		}
 	}
+
+	ui_draw_layout(CAMPAIGN_ROWS,
+	               (uint8_t)(sizeof CAMPAIGN_ROWS / sizeof CAMPAIGN_ROWS[0]));
+	paint(snap, tab);
 
 	/* header: live treasury ticker + day (R2: <= 1 tick lag)             */
 	snprintf(line, sizeof line, "TREASURY %-9lu +2/DAY   DAY %u",
@@ -175,6 +307,6 @@ void campaign_frame(void) {
 		status_frames--;
 		ui_draw_text(0, 12, status_line);
 	} else {
-		ui_draw_text(0, 12, "A Recruit . L/R page . START pause B12");
+		ui_draw_text(0, 12, "A recruit. Up/Down pick a front. START settings.");
 	}
 }

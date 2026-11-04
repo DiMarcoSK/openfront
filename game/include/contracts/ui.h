@@ -41,6 +41,12 @@ ui_screen_t ui_screen(void);
 uint8_t ui_selected_row(void);/* ui_frame(): draw the current screen once; called by loop each VBlank.  */
 void ui_frame(void);
 
+/* ui_sim_hold(): additive B22 - true while a reading surface (the battle
+ * order panel, the boss intro) holds the tick and the battle step; loop
+ * runs 0 ticks and 0 steps and never catches up (spec-04 T026).         */
+#include <stdbool.h>
+bool ui_sim_hold(void);
+
 /* ui_set_screen(): switch the top-level screen (loop owns switches).     */
 void ui_set_screen(ui_screen_t screen);
 

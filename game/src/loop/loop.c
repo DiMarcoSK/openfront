@@ -12,6 +12,7 @@
 #include "contracts/loop.h"
 #include "contracts/audio.h"
 #include "contracts/queue.h"
+#include "contracts/render.h"
 #include "contracts/save.h"
 #include "contracts/sim_api.h"
 #include "contracts/trace.h"
@@ -27,6 +28,7 @@ void queue_frame(uint32_t frame);
 
 static uint32_t frame_counter;
 static uint64_t wall_tick; /* last 10 Hz wall-clock stamp                */
+static uint8_t turn_ticks; /* sub-ticks into the running battle turn      */
 
 void loop_init(void) {
 	frame_counter = 0u;
@@ -38,6 +40,7 @@ void loop_start(void) {
 	bool running = true;
 	while (running && pmMainLoop()) {
 		swiWaitForVBlank();
+		render_vblank(); /* last frame: overlay, OAM, palettes, tear-free */
 		scanKeys();
 		/* B14: the L+R+START dev overlay chord (all three edges in
 		 * the same keysDown frame). The chord consumes START so the
@@ -45,13 +48,9 @@ void loop_start(void) {
 		if ((keysDown() & (KEY_L | KEY_R | KEY_START)) ==
 		    (KEY_L | KEY_R | KEY_START)) {
 			diag_overlay_cycle();
-		} else if (ui_screen() != UI_SCREEN_TITLE &&
-		           (keysDown() & KEY_START)) {
-			/* START exits outside the title only: on the title it
-			 * is the Settings entry (spec-01 6.5), delivered
-			 * through the conduit.                                 */
-			running = false;
 		}
+		/* START is the Settings entry on every screen (B24, spec-06
+		 * 6.4), delivered through the conduit like any key.           */
 		trace_set_frame(frame_counter);
 
 		const uint64_t t0 = tickGetCount();
@@ -72,6 +71,10 @@ void loop_start(void) {
 			 * muster also runs in Base (spec-03 R1/R4), battle
 			 * runs its own resolve next to the economy ticker. */
 			const ui_screen_t scr = ui_screen();
+			/* B22 (spec-04 T026): an open order panel or the boss
+			 * intro holds the tick AND the battle step - 0 catch-up
+			 * when it closes (10 s open = 0 ticks, 0 steps).        */
+			const bool hold = ui_sim_hold();
 			uint8_t modes = 0u;
 			if (scr == UI_SCREEN_CAMPAIGN || scr == UI_SCREEN_BATTLE ||
 			    scr == UI_SCREEN_SETTINGS) {
@@ -81,6 +84,9 @@ void loop_start(void) {
 			    scr == UI_SCREEN_BATTLE || scr == UI_SCREEN_SETTINGS) {
 				modes |= SIM_RUN_MUSTER;
 			}
+			if (hold) {
+				modes = 0u;
+			}
 			sim_set_run_mode(modes);
 			const uint8_t subs = sim_speed();
 			const uint32_t sim_t0 = tickGetCount();
@@ -89,13 +95,19 @@ void loop_start(void) {
 			 * naturally accumulates n ticks; each battle sub-step
 			 * is one turn, stopping at the seal.                  */
 			sim_step(subs);
-			if (scr == UI_SCREEN_BATTLE) {
+			if (scr == UI_SCREEN_BATTLE && !hold) {
 				for (uint8_t s = 0u; s < subs; ++s) {
 					if (!sim_battle_active() ||
 					    sim_battle_sealed()) {
 						break;
 					}
-					sim_battle_step();
+					/* one turn per SIM_BATTLE_TICKS_PER_TURN
+					 * sub-ticks: x1 = 1 turn/s, x4 = 4 turns/s,
+					 * same turn rules at every rate (T017).  */
+					if (++turn_ticks >= SIM_BATTLE_TICKS_PER_TURN) {
+						turn_ticks = 0u;
+						sim_battle_step();
+					}
 				}
 			}
 			/* B20: honest clamp (R5) - the measured sim slice
@@ -115,7 +127,9 @@ void loop_start(void) {
 			diag_frame_sample(); /* one sample -> the 10 s window */
 		}
 		frame_counter++;
+		render_begin();
 		ui_frame();
+		render_frame();
 		diag_push(DIAG_KEY_FRAME_MS, WALL_MS(tickGetCount() - t0));
 		/* The pump: 1 trace line per hop to the emulator console.      */
 		trace_sync();

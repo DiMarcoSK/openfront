@@ -183,6 +183,114 @@
   "kind": "obj",
   "per_frame": 1
  },
+ "frame_battle_arena_ares": {
+  "bpp": 8,
+  "colours": 29,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 259,
+  "vram_bytes": 18112,
+  "w": 256
+ },
+ "frame_battle_arena_hades": {
+  "bpp": 8,
+  "colours": 29,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 259,
+  "vram_bytes": 18112,
+  "w": 256
+ },
+ "frame_battle_arena_kronos": {
+  "bpp": 8,
+  "colours": 28,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 232,
+  "vram_bytes": 16384,
+  "w": 256
+ },
+ "frame_battle_arena_poseidon": {
+  "bpp": 8,
+  "colours": 29,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 259,
+  "vram_bytes": 18112,
+  "w": 256
+ },
+ "frame_battle_arena_zeus": {
+  "bpp": 8,
+  "colours": 29,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 259,
+  "vram_bytes": 18112,
+  "w": 256
+ },
+ "frame_battle_desert": {
+  "bpp": 8,
+  "colours": 37,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 285,
+  "vram_bytes": 19776,
+  "w": 256
+ },
+ "frame_battle_highlands": {
+  "bpp": 8,
+  "colours": 38,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 279,
+  "vram_bytes": 19392,
+  "w": 256
+ },
+ "frame_battle_plains": {
+  "bpp": 8,
+  "colours": 37,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 286,
+  "vram_bytes": 19840,
+  "w": 256
+ },
+ "frame_result_loss": {
+  "bpp": 8,
+  "colours": 8,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 103,
+  "vram_bytes": 8128,
+  "w": 256
+ },
+ "frame_result_win": {
+  "bpp": 8,
+  "colours": 8,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 106,
+  "vram_bytes": 8320,
+  "w": 256
+ },
+ "frame_sheet": {
+  "bpp": 8,
+  "colours": 7,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 8,
+  "vram_bytes": 2048,
+  "w": 256
+ },
+ "frame_title": {
+  "bpp": 8,
+  "colours": 8,
+  "h": 192,
+  "kind": "bg",
+  "tiles": 24,
+  "vram_bytes": 3072,
+  "w": 256
+ },
  "fx_ares": {
   "bytes": 12288,
   "fh": 64,

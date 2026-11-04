@@ -27,8 +27,16 @@ MODULES = [
 HOSTINCLUDES_OK = {
     "nds.h", "calico.h", "stdlib.h", "stdint.h", "stdio.h", "string.h",
     "stdbool.h", "stddef.h", "limits.h", "stdint-gcc.h", "assert.h", "errno.h",
-    "fat.h",
+    "fat.h", "sys/iosupport.h",
 }
+
+# The generated art headers (tools/art/export.py -> art/ds) belong to the
+# render module alone: it is the only writer to VRAM (render.h v1).
+ART_HEADERS = {"art_assets.h", "art_assets_game.h", "art_index.h", "art_palettes.h"}
+
+# Rule 4 (B25, ADR-0003): the licence/surface gate - no maxmod include
+# (LibXM7 is the chosen mixer) anywhere in src/ or the contracts.
+BANNED_LIBS = re.compile(r'#\s*include\s+[<"](maxmod\w*\.h|mm_\w+\.h)[>"]')
 
 HEX_LITERAL = re.compile(r"(?<![0-9A-Za-z_])[0-9A-F]{6}(?![0-9a-z_])")
 
@@ -71,6 +79,12 @@ def main() -> int:
                     continue
                 if header.startswith("http"):
                     continue
+                if header in ART_HEADERS:
+                    if module != "render":
+                        failures.append(
+                            f"{cfile}:{ln} includes {header}: the art tables"
+                            " belong to render; use contracts/render.h")
+                    continue
                 # public contract headers of any module are the right way in
                 if header.startswith("contracts/") and header.endswith(".h"):
                     continue
@@ -112,6 +126,11 @@ def main() -> int:
             # comments stripped so prose like "select (R7)" stays prose.
             stripped = re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S)
             for ln, line in enumerate(text.splitlines(), 1):
+                if BANNED_LIBS.search(line):
+                    failures.append(
+                        f"{cfile}:{ln} banned library include"
+                        " (B25 licence gate: LibXM7, never maxmod)"
+                    )
                 if NET_HEADERS.search(line):
                     failures.append(
                         f"{cfile}:{ln} network header include"

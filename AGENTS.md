@@ -2,38 +2,41 @@
 
 ## Read me first: what is done and what is trivial
 
-B01, B02, B03, B04, B06, **B07, B08, B09, B10, B11, B12 and B13** of the
-backlog are **DONE and TRIVIAL — do not redo them**. Phase 1 is closed: the
-ROM already runs the full loop (title -> campaign -> base -> battle ->
-result -> reboot), the save is v1->v2 migrated (selection byte 62) and the
-save is tamper-harnessed. The remaining critical-path items are actual work:
+**Phases 0-5 are CLOSED** (B01-B04, B06-B26 DONE - do not redo them).
+B05 is mostly done (only the 2-emulator capture runner B31 and the device
+POC append remain). The ROM is a playable art demo: every screen paints
+on the generated art (render.c owns VRAM: 8bpp backdrops + immediate
+4bpp overlay + streamed sprites), boss intros, the high-camera battle,
+the order panel, SaveStatus rows and Settings.
 
-- Next up: **B19 (ADR-0007 POC sweep)**, then B20-B22 (battle), B24-B26
-  (save/result), B27-B30 polish. **Phase 3 (Epic E4 Base) is CLOSED**:
-  B14 (observability), B15 (recruit states + SFX), B16 (formation hash +
-  N/10 + touch parity), B17 (tier band 24 px pixel model) and B18
-  (budget probe proven + rollback fixtures + `game/docs/base.md`)
-  all DONE - see BACKLOG.md status lines.
-- **B05 is mostly done** (include-graph + real byte budget + cycle
-  harness + 8/8 contrast + golden frame hash + save profiles all wired;
-  only the 2-emulator capture runner (B31) and the ADR-0007 device POC
-  (B19) remain).
+- B27a (battle depth to GAME_DESIGN 7-8) is DONE: formations, terrain,
+  morale, flanks, Rally/Charge, per-god omen/counter/wrath, relics,
+  alerts; `make balance` gates it inside `make ci`.
+- Next up: **Phase 6 polish (B27-B31)**, then B32-B34 launch. Every
+  hardware number from phases 4-5 is collected in **B33**.
+- `make ci` is the blocking job (rom 0 warnings, gates, host suites,
+  budget, contrast, POC, grayscale) - run it before calling anything done.
+- The budget gate now counts the ARM9 `.main` image (code + art): main
+  RAM holds both, 2735 KB cap. Adding art means re-checking `make budget`.
+- Design mock-ups (`*_bottom`, `battle_mock`) stay in the gallery; the
+  game uses `art_assets_game.h` (tools/art/export.py writes both).
 
-The status of every item — with acceptance evidence — is inside
-`cases/nintendo-ds-strategy-tycoon-incremental/BACKLOG.md` (B01..B06 carry a
-`> **STATUS ...**` line right below the checkbox). The 7 ADRs live in the
-same folder under `adr/`, the SDD in `SDD.md`.
+The status of every item - with acceptance evidence - is inside
+`cases/nintendo-ds-strategy-tycoon-incremental/BACKLOG.md` (each item
+carries a `> **STATUS ...**` line right below the checkbox). The 7 ADRs
+live in the same folder under `adr/`, the SDD in `SDD.md`.
 
 ## Where the work happens
 
 | Path | What it is |
 |---|---|
 | `cases/nintendo-ds-strategy-tycoon-incremental/` | The full debate: SDD.md, adr/ (7), BRANDBOOK.md, specs/ (01..06 with spec/plan/tasks), BACKLOG.md, research.md, audit.md, tokens.json |
-| `game/Makefile` | devkitARM build; `clean \| rom \| budget \| run \| regen \| test-host \| include-graph \| memory \| memory-check \| rtk-* \| help` |
+| `game/Makefile` | devkitARM build; `clean \| rom \| ci \| budget \| run \| regen \| test-host \| include-graph \| memory \| memory-check \| rtk-* \| help` |
 | `game/src/{boot,loop,input,sim,render,save,audio,ui,queue}` | The 9 modules of the modular monolith |
 | `game/include/contracts/*.h` | 7 frozen v1 contracts; sizes pinned by static asserts (8/16/22/63/129/170 B) |
 | `game/tools/*.sh|*.py` | setup.sh (one-time), check_budget.sh, check_modules.py, gen_tokens.py, rtk.sh, memory.sh, run.sh (melonDS) |
-| `game/tests/host/run.sh` | gcc host tests (B03 queue caps, B06 save core) |
+| `game/tests/host/run.sh` | gcc host suites (queue, save, title, campaign, base, battle, orders, SaveStatus, fuzz) |
+| `game/docs/` | runbooks, save format, acceptance record, handoff fields |
 
 ## Build recipe (one-time setup, then trivial)
 

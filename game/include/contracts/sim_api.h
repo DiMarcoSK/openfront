@@ -114,6 +114,7 @@ uint32_t sim_ops_last_step(void); /* B05 cycle harness: unit ops/frame    */
 #define SIM_DAY_INCOME         2u    /* +2 treasury per day            */
 
 #define SIM_FRONT_COUNT        8u    /* 8 ROM records (spec-02 OQ1)     */
+#define SIM_TREASURY_CAP       9999999u /* B25 ingest clamp (7 digits) */
 
 typedef enum sim_threat {
 	SIM_THREAT_LOW = 0,
@@ -202,6 +203,10 @@ bool sim_slot_swap(uint8_t a, uint8_t b);
 
 #define SIM_BATTLE_TURNS 9u   /* 9 turns cap (spec-04 wireframe T7/9)    */
 #define SIM_BATTLE_UNITS 64u  /* animated chips cap (R3)                 */
+/* Art pass pacing: the loop resolves one turn per 10 sub-ticks (1 s at
+ * x1) so an order can be read and taken back before it lands; the sim
+ * step itself is unchanged (host tests call it per turn).             */
+#define SIM_BATTLE_TICKS_PER_TURN 10u
 
 /* sim_battle_step(): 10 Hz call while a battle is live; ends <= 9 turns
  * later. The 300k sim-cycle ceiling is hardware-measured by B05/B19.     */
@@ -305,5 +310,78 @@ bool sim_undo_armed(void);
  * synchronous, so the ack is on the next drawn frame (<= 16.7 ms,
  * inside the 120 ms inline ack budget, R6).                            */
 const char *sim_order_status(void);
+
+/* ---- battle handoff + resume (spec-04 R12, B22, T027-T029) ------------- */
+
+/* sim_ingest_rejected_midturn(): the last ingested aggregate carried the
+ * in-battle marker (reserved[3]) and was refused as mid-turn state - the
+ * run restarts at the table; a deploy always starts at turn 1 (T029).  */
+bool sim_ingest_rejected_midturn(void);
+
+/* sim_battle_enemies_start(): the enemy strength the front opened with
+ * (6 + 3 x threat) - the art reads it to thin the enemy line.          */
+uint8_t sim_battle_enemies_start(void);
+
+/* sim_battle_losses(): companies this battle lost to attrition. The
+ * muster keeps running during a battle (spec-03 R4), so units_after -
+ * units_before mixes arrivals in; the ledger's "Fallen" reads this.    */
+uint8_t sim_battle_losses(void);
+
+/* ---- battle depth (GAME_DESIGN 7-8, additive) ---------------------------
+ * Formation kind, terrain, morale, flanks, the general's two abilities,
+ * the gods' own rules and their relics. Every rule is O(1) per turn and
+ * deterministic per seed; Retry replays it byte-exact (ADR-0007).
+ * Commands: 10 = ability (arg SIM_ABILITY_*), 11 = formation kind (arg
+ * SIM_FORM_*, refused while a battle is live). The kind persists in the
+ * v1 aggregate `formation` byte (0 = Line on older records).            */
+enum { SIM_FORM_LINE = 0, SIM_FORM_PHALANX, SIM_FORM_WEDGE, SIM_FORM_CIRCLE,
+       SIM_FORM_COUNT };
+enum { SIM_TERRAIN_PLAINS = 0, SIM_TERRAIN_DESERT, SIM_TERRAIN_HIGHLANDS,
+       SIM_TERRAIN_ARENA, SIM_TERRAIN_COUNT };
+/* boss ids follow the RENDER_GOD_* order; a relic bit per boss.          */
+enum { SIM_BOSS_ZEUS = 0, SIM_BOSS_POSEIDON, SIM_BOSS_HADES, SIM_BOSS_ARES,
+       SIM_BOSS_KRONOS, SIM_BOSSES };
+#define SIM_BOSS_NONE 0xFFu
+enum { SIM_ABILITY_RALLY = 0, SIM_ABILITY_CHARGE, SIM_ABILITIES };
+#define SIM_RALLY_COOLDOWN  4u  /* turns                                  */
+#define SIM_CHARGE_COOLDOWN 5u
+#define SIM_MORALE_MAX      100u
+enum { SIM_FLANK_SECURE = 0, SIM_FLANK_PRESSED, SIM_FLANK_BROKEN };
+/* alerts, ordered by priority (one per turn, the highest wins)          */
+enum { SIM_EVT_NONE = 0, SIM_EVT_FLANK_HELD, SIM_EVT_WAVERING,
+       SIM_EVT_FOE_ROUT, SIM_EVT_FLANK_BROKEN, SIM_EVT_CAV_CHARGE,
+       SIM_EVT_BOSS_OMEN, SIM_EVT_BOSS_COUNTERED, SIM_EVT_BOSS_STRIKE,
+       SIM_EVT_BOSS_PHASE, SIM_EVT_COLLAPSE, SIM_EVT_RALLY, SIM_EVT_CHARGE,
+       SIM_EVT_COUNT };
+
+uint8_t sim_formation_kind(void);
+const char *sim_formation_name(uint8_t kind);
+const char *sim_formation_brief(uint8_t kind);   /* <= 30 chars          */
+
+uint8_t sim_front_terrain(uint8_t province);
+const char *sim_terrain_name(uint8_t terrain);
+const char *sim_terrain_brief(uint8_t terrain);
+uint8_t sim_front_boss(uint8_t province);        /* SIM_BOSS_NONE if none */
+const char *sim_boss_name(uint8_t boss);
+const char *sim_boss_omen(uint8_t boss);         /* names the counter     */
+
+/* sim_relic_mask(): bit b = boss b defeated (its front taken).           */
+uint8_t sim_relic_mask(void);
+const char *sim_relic_name(uint8_t boss);
+const char *sim_relic_brief(uint8_t boss);
+
+uint8_t sim_battle_morale(void);                 /* 0..100                */
+uint8_t sim_battle_foe_morale(void);
+uint8_t sim_battle_flank(void);                  /* SIM_FLANK_*           */
+uint8_t sim_battle_boss_phase(void);             /* 0 none, 1, 2          */
+uint8_t sim_battle_turn_cap(void);               /* 9, 10 with the harpe  */
+uint8_t sim_ability_cooldown(uint8_t ability);   /* 0 = ready             */
+bool sim_charge_armed(void);
+
+/* the latest alert: the seq bumps once per new alert so ui shows each
+ * exactly once; the copy is NULL for SIM_EVT_NONE.                      */
+uint8_t sim_battle_event(void);
+uint16_t sim_battle_event_seq(void);
+const char *sim_battle_event_copy(void);
 
 #endif /* WAR_TABLE_SIM_API_H_V1 */

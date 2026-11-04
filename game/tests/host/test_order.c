@@ -63,7 +63,7 @@ static void stage(void) {
 	memset(&d, 0, sizeof d);
 	d.seq = 8u;
 	d.cmd = 4u;
-	d.arg = 3u; /* front South, LOW: 6 enemies */
+	d.arg = 3u; /* front South, LOW: 8 enemies, 11 companies (+1) */
 	assert(sim_apply(&d) == SIM_OK);
 	assert(sim_battle_active());
 }
@@ -115,13 +115,15 @@ int main(void) {
 		sim_battle_step();
 		assert(sim_orders_pending() == 0u); /* applied exactly once   */
 		const uint8_t enemies = sim_battle_enemies();
-		assert(enemies >= 3u && enemies <= 4u); /* 6 - (2..3)          */
+		assert(enemies >= 4u && enemies <= 5u); /* 8 - (1..2 +1 army +1)  */
 	}
 
 	/* HOLD suppresses attrition: 4 turns keep the roster untouched.      */
 	stage();
 	{
-		assert(order(SIM_ORDER_HOLD) == SIM_OK);
+		for (uint8_t s = 0u; s < 4u; ++s) {
+			assert(order(SIM_ORDER_HOLD) == SIM_OK);
+		}
 		assert(strcmp(sim_order_status(), "HOLD queued.") == 0);
 		for (uint8_t s = 0u; s < 4u; ++s) {
 			if (!sim_battle_active() || sim_battle_sealed()) {
@@ -139,7 +141,7 @@ int main(void) {
 		assert(strcmp(sim_order_status(), "FLANK queued.") == 0);
 		sim_battle_step();
 		assert(sim_battle_units() == sim_battle_units_start() - 1u);
-		assert(sim_battle_enemies() <= 3u); /* 6 - (3..4)             */
+		assert(sim_battle_enemies() <= 4u); /* 8 - (1..2 +1 army +2)   */
 	}
 
 	/* FALLBACK: no kill, no loss.                                        */
@@ -147,7 +149,7 @@ int main(void) {
 	{
 		assert(order(SIM_ORDER_FALLBACK) == SIM_OK);
 		sim_battle_step();
-		assert(sim_battle_enemies() == 6u);
+		assert(sim_battle_enemies() == sim_battle_enemies_start());
 		assert(sim_battle_units() == sim_battle_units_start());
 	}
 
@@ -211,6 +213,7 @@ int main(void) {
 			assert(sim_battle_turn() == 1u);
 			assert(sim_battle_enemies() == ref);
 		}
+	}
 
 	/* End-turn commit: flush, close undo, 2 s copy (T024).               */
 	stage();

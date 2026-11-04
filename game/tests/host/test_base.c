@@ -125,6 +125,11 @@ static void ingest_roster(uint32_t treasury, uint16_t chest, uint16_t day,
 int main(void) {
 	setvbuf(stdout, NULL, _IONBF, 0);
 
+	/* Regression (art pass): before any input the Base requests no
+	 * screen - a zero-initialised request read as UI_SCREEN_TITLE and
+	 * bounced the first deploy back through the title handoff.        */
+	assert(base_request() == UI_SCREEN_NONE);
+
 	/* R4: 1 company every 20 ticks; 5 ready at 10 s (100 ticks)          */
 	sim_init(1u);
 	ingest(580u, 0u, 12u);
@@ -281,18 +286,18 @@ int main(void) {
 		printf("base: N/10 label byte-exact at 4 of 10\n");
 	}
 
-	/* T019: every slot reachable by d-pad: 11 DOWN steps visit all
-	 * 10 slot cards + the Deploy door (focus marker "<" per row).         */
+	/* T019: every slot reachable by d-pad: 12 DOWN steps visit all
+	 * 10 slot cards, the formation kind + the Deploy door ("<" marker). */
 	{
 		ingest_roster(600u, 0u, 12u, 10u); /* full formation        */
 		sim_autoform();
 		/* tab is already Formation here (the 4-of-10 block toggled it)  */
-		bool visited[SIM_FORMATION_SLOTS + 1];
+		bool visited[SIM_FORMATION_SLOTS + 2];
 		memset(visited, 0, sizeof visited);
-		for (int step = 0; step <= (int)SIM_FORMATION_SLOTS; ++step) {
+		for (int step = 0; step <= (int)SIM_FORMATION_SLOTS + 1; ++step) {
 			clear_drawn();
 			base_frame();
-			for (int i = 0; i < (int)SIM_FORMATION_SLOTS + 1; ++i) {
+			for (int i = 0; i < (int)SIM_FORMATION_SLOTS + 2; ++i) {
 				if (visited[i]) {
 					continue;
 				}
@@ -305,6 +310,11 @@ int main(void) {
 					if (strstr(drawn[4 + (i / 5)], probe) != NULL) {
 						visited[i] = true;
 					}
+				} else if (i == (int)SIM_FORMATION_SLOTS) {
+					if (strstr(drawn[10], "FORMATION") != NULL &&
+					    strstr(drawn[10], " <") != NULL) {
+						visited[i] = true; /* the kind cycler  */
+					}
 				} else if (strstr(drawn[12], " <") != NULL) {
 					/* the Deploy door marker is appended last    */
 					visited[i] = true;
@@ -312,10 +322,10 @@ int main(void) {
 			}
 			base_input((uint8_t)UI_EVT_KEY, KEY_DOWN);
 		}
-		for (int i = 0; i <= (int)SIM_FORMATION_SLOTS; ++i) {
+		for (int i = 0; i <= (int)SIM_FORMATION_SLOTS + 1; ++i) {
 			assert(visited[i]);
 		}
-		printf("base: 10 slots + Deploy reachable by d-pad\n");
+		printf("base: 10 slots + kind + Deploy reachable by d-pad\n");
 	}
 
 	/* T019: touch parity - tap moves the ring, tap 2 on the same

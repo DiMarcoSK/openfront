@@ -29,6 +29,7 @@ typedef enum title_action {
 /* title_init(): enter the title in LOADING; the scan runs inside the
  * first frames of the loop so the skeleton is drawn first (spec-01 R8).  */
 void title_init(void);
+void title_refresh(void);
 
 title_state_t title_state(void);
 

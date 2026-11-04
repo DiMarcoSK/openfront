@@ -6,7 +6,7 @@ RAM: parsed from the linker map's allocatable output sections
 theoretical 2795 KB ceiling. Fails above the 2735 KB gate.
 
 VRAM: sum of the engine RB banks claim at runtime (render_init banks;
-each DS VRAM bank is 16 KB). Fails above 656 KB.
+the real bank sizes, A-D 128 KB each). Fails above 656 KB.
 """
 from __future__ import annotations
 
@@ -22,7 +22,9 @@ RAM_CAP_KB = 2735
 VRAM_CAP_KB = 656
 BANK_KB = 16
 
-RAM_SECTIONS = (".main.rw", ".main.bss", ".dtcm.bss", ".twl.bss")
+# .main = ARM9 code + rodata (the compiled-in art lives here): it loads
+# into the same main RAM, so the gate counts it (the art pass hit lma9).
+RAM_SECTIONS = (".main", ".main.rw", ".main.bss", ".dtcm.bss", ".twl.bss")
 
 
 def map_ram_bytes() -> int:
@@ -39,11 +41,15 @@ def map_ram_bytes() -> int:
     return total
 
 
+# Real DS VRAM bank sizes (KB): the art pass claims A-D at 128 KB each.
+BANK_SIZE_KB = dict(A=128, B=128, C=128, D=128, E=64, F=16, G=16, H=32, I=16)
+
+
 def vram_bytes() -> int:
-    banks = 0
-    if RENDER.exists():
-        banks = len(re.findall(r"vramSetBank[A-Z]\(", RENDER.read_text()))
-    return banks * BANK_KB * 1024
+    if not RENDER.exists():
+        return 0
+    banks = set(re.findall(r"vramSetBank([A-I])\(", RENDER.read_text()))
+    return sum(BANK_SIZE_KB[b] for b in banks) * 1024
 
 
 def main() -> int:
@@ -57,9 +63,9 @@ def main() -> int:
         ram += int(RAM_CAP_KB + 6) * 1024
     ram_kb = (ram + 1023) // 1024
     vram_kb = (vram + 1023) // 1024
-    print(f"  RAM   {ram_kb:4d} KB ({ram} B: .main.rw + .bss + tcm.bss)"
+    print(f"  RAM   {ram_kb:4d} KB ({ram} B: .main code+art + .rw + .bss + tcm.bss)"
           f"  <= {RAM_CAP_KB} KB")
-    print(f"  VRAM  {vram_kb:4d} KB ({vram // 1024} B: "
+    print(f"  VRAM  {vram_kb:4d} KB ({vram} B: "
           f"{{vramSetBank}} claims in render.c)  <= {VRAM_CAP_KB} KB")
     fail = 0
     if ram_kb > RAM_CAP_KB:

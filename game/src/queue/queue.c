@@ -27,6 +27,7 @@ static uint32_t reject_total, queue_full_rejects;
 static bool save_pending;
 static uint16_t debounce_left;
 static bool first_frame;
+static bool boundary_commit; /* B22: the Continue boundary is pending */
 
 void diag_push(diag_key_t key, uint32_t value);
 uint32_t diag_read(diag_key_t key);
@@ -128,9 +129,13 @@ static void dispatch_commands(uint32_t frame) {
 			 * queue-full, drained frontier - is logged).           */
 			/* B14: the ui -> sim hop, keyed boot:frame:seq.        */
 			trace_hop(TRACE_FLOW_CMD, 1u, cmd.seq);
-			if (cmd.cmd == 5u) {
+			if (cmd.cmd == 5u && r == SIM_OK) {
 				/* the result hop: the one Continue apply      */
 				trace_hop(TRACE_FLOW_RESULT, 1u, cmd.seq);
+				/* B22/B24: Continue is a paused boundary - one
+				 * core commit per battle end, written now so the
+				 * Result row shows it (spec-06 flow, T028).    */
+				boundary_commit = true;
 			}
 			break;
 		case SIM_INSUFFICIENT_TREASURY:
@@ -154,11 +159,14 @@ static void dispatch_commands(uint32_t frame) {
  * per 600 frames (10 s worst case); the card is only written here.        */
 static uint32_t last_commit_frame;
 static void coalesce_save(uint32_t frame) {
-	if (ui_screen() != UI_SCREEN_CAMPAIGN || !save_is_dirty()) {
+	const bool boundary = boundary_commit && save_is_dirty();
+	boundary_commit = false;
+	if (!boundary &&
+	    (ui_screen() != UI_SCREEN_CAMPAIGN || !save_is_dirty())) {
 		diag.save_depth = 0u;
 		return;
 	}
-	if (frame - last_commit_frame < 600u) {
+	if (!boundary && frame - last_commit_frame < 600u) {
 		diag.save_depth = 1u; /* pending, coalesced                 */
 		return;
 	}
@@ -167,7 +175,9 @@ static void coalesce_save(uint32_t frame) {
 	 * snapshot; sim_set_selected clamps an out-of-range report to row 0
 	 * (never a VERIFY_FAIL), and the export persists it at byte 62.      */
 	const uint8_t selected = ui_selected_row();
-	sim_set_selected(selected);
+	if (selected != 0xFFu) {
+		sim_set_selected(selected); /* Result keeps the stored row */
+	}
 	sim_export_aggregate(&agg);
 	save_set_day(sim_snapshot()->day);
 	const save_status_t s = save_commit(&agg);

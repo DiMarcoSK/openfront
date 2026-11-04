@@ -12,6 +12,7 @@
 #include "contracts/save.h"
 #include "contracts/audio.h"
 #include "contracts/ui.h"
+#include "contracts/render.h"
 
 #include "ui_draw.h"
 #include "base_tier.h"
@@ -20,7 +21,7 @@
 /* ---- state -------------------------------------------------------------- */
 static int tab;                     /* 0 = Recruit, 1 = Formation        */
 static int focus;                   /* per-tab target index              */
-static ui_screen_t request;
+static ui_screen_t request = UI_SCREEN_NONE; /* 0 would be TITLE */
 static char status_line[64];
 static int status_frames;
 
@@ -102,16 +103,33 @@ static void deploy_or_block(void) {
 	}
 }
 
+/* Formation tab targets: the 10 slot cards, the formation-kind cycler
+ * (GAME_DESIGN 7: a general formation, its divisions arranged inside),
+ * then the Deploy door.                                                  */
+#define KIND_FOCUS ((int)SIM_FORMATION_SLOTS)
+#define FORM_DEPLOY_FOCUS ((int)SIM_FORMATION_SLOTS + 1)
+
 static bool deploy_focus_now(void) {
-	const int deploy_focus = (tab == 0) ? 2 : SIM_FORMATION_SLOTS;
+	const int deploy_focus = (tab == 0) ? 2 : FORM_DEPLOY_FOCUS;
 	return (focus == deploy_focus);
+}
+
+static void cycle_kind(void) {
+	char line[64];
+	const uint8_t next = (uint8_t)((sim_formation_kind() + 1u) % SIM_FORM_COUNT);
+	if (enqueue_cmd(11u, next)) {
+		snprintf(line, sizeof line, "%s: %s", sim_formation_name(next),
+		         sim_formation_brief(next));
+		say(line);
+		audio_cue(AUDIO_CUE_CONFIRM);
+	}
 }
 
 
 /* Per-tab focus targets: Recruit offers the stepper, Confirm and Deploy;
- * Formation offers the 10 slot cards and Deploy.                        */
+ * Formation offers the 10 slot cards, the kind cycler and Deploy.       */
 static int target_count(void) {
-	return (tab == 0) ? 3 : SIM_FORMATION_SLOTS + 1;
+	return (tab == 0) ? 3 : FORM_DEPLOY_FOCUS + 1;
 }
 
 /* The A action on the current focus, shared by the key and the touch
@@ -147,8 +165,10 @@ static void do_action(void) {
 			break;
 		}
 	} else {
-		if (focus == SIM_FORMATION_SLOTS) {
+		if (focus == FORM_DEPLOY_FOCUS) {
 			deploy_or_block();
+		} else if (focus == KIND_FOCUS) {
+			cycle_kind();
 		} else if (!swap_pending) {
 			first_selected = focus; /* slot select (R7)    */
 			swap_pending = true;
@@ -183,6 +203,9 @@ static int touch_target(uint32_t value) {
 		if (py < 64u) return 0;
 		if (py < 96u) return 1;
 		return 2;
+	}
+	if (py >= 104u) {
+		return (px < 124u) ? KIND_FOCUS : FORM_DEPLOY_FOCUS;
 	}
 	const int row = (py < 64u) ? 0 : 1;
 	const int col = (px < 51u) ? 0
@@ -238,6 +261,194 @@ ui_screen_t base_request(void) {
 	return r;
 }
 
+/* ---- art pass ----------------------------------------------------------- */
+static const ui_row_t BASE_ROWS[] = {
+	{0, RENDER_BOTTOM, 160, 8, 96, 1, RENDER_LINE},
+	{8, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK},
+	{2, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK}, /* Formation N/10 */
+	{7, RENDER_BOTTOM, 8, 150, 240, 1, RENDER_ACCENT},
+	{14, RENDER_BOTTOM, 8, 166, 240, 3, RENDER_INK},
+};
+/* the Recruit tab's chest row stays semantic only (painted below)     */
+static const ui_row_t BASE_ROWS_RECRUIT[] = {
+	{0, RENDER_BOTTOM, 160, 8, 96, 1, RENDER_LINE},
+	{8, RENDER_BOTTOM, 8, 130, 240, 2, RENDER_INK},
+	{14, RENDER_BOTTOM, 8, 166, 240, 3, RENDER_INK},
+};
+
+/* company id -> the arm it marches as (4 arms, deterministic)         */
+static uint8_t arm_of(uint8_t id) {
+	static const uint8_t ARM[4] = {RENDER_CLS_SPEAR, RENDER_CLS_BLADE,
+	                               RENDER_CLS_ARCHER, RENDER_CLS_CAVALRY};
+	return ARM[id & 3u];
+}
+
+static void paint_top(const sim_snapshot_t *snap, uint8_t tier_now) {
+	char buf[48];
+	const uint32_t step = ui_anim_step();
+	render_backdrop(RENDER_TOP, RENDER_BD_MAP_PLAINS, RENDER_GOD_NONE);
+	render_camera(40, 120);
+	/* every mustered company stands on the parade ground (10 shown);
+	 * a formed slot marches as its own arm                            */
+	const uint8_t *form = sim_formation();
+	const uint16_t roster = sim_roster();
+	for (int i = 0; i < (int)SIM_FORMATION_SLOTS && i < (int)roster; ++i) {
+		const uint8_t id = (form[i] != 0xFFu) ? form[i] : (uint8_t)i;
+		const int x = 24 + (i % 5) * 40 + (i / 5) * 12;
+		const int y = 20 + (i / 5) * 24;
+		render_squad(RENDER_CIV_HELLENES, arm_of(id), 0u,
+		             RENDER_ANIM_IDLE, step + (uint32_t)i, x, y, 0u);
+	}
+	if (sim_roster() > 0u) {
+		render_squad(RENDER_CIV_HELLENES, RENDER_CLS_GENERAL, 0u, 2u, step,
+		             4, 28, 0u);
+	}
+	/* the muster: companies still in the queue wait at the camp edge   */
+	const uint32_t queued = sim_muster_total() - sim_muster_done();
+	for (uint32_t k = 0; k < queued && k < 5u; ++k) {
+		render_squad(RENDER_CIV_HELLENES, RENDER_CLS_SPEAR, 3u,
+		             RENDER_ANIM_WALK, step + k, 200 + (int)k * 6,
+		             84 + (int)k * 4, 0u);
+	}
+	/* the relic shelf (GAME_DESIGN 8/15): every god beaten stays on
+	 * show at the camp; an empty niche says what is still out there   */
+	{
+		const uint8_t relics = sim_relic_mask();
+		render_rect(RENDER_TOP, 150, 2, 104, 22, RENDER_INK);
+		render_text(RENDER_TOP, 154, 4, RENDER_LINE, "Relics");
+		for (uint8_t g = 0; g < SIM_BOSSES; ++g) {
+			const int x = 154 + (int)g * 20;
+			if (relics & (1u << g)) {
+				render_relic(RENDER_TOP, g, x - 2, 8, RENDER_SPR_FRONT);
+			} else {
+				render_box(RENDER_TOP, x, 13, 12, 9, RENDER_IRON);
+			}
+		}
+	}
+	render_panel(RENDER_TOP, 8, 132, 240, 54, RENDER_PANEL_IRON);
+	render_text(RENDER_TOP, 16, 139, RENDER_LINE, "Chest");
+	snprintf(buf, sizeof buf, "%u/%u", (unsigned)sim_chest(), SIM_CHEST_CAP);
+	render_text_big(RENDER_TOP, 16, 150, RENDER_BRONZE_L, buf);
+	render_icon(RENDER_TOP, RENDER_ICON_GOLD, 130, 140, RENDER_SPR_FRONT);
+	snprintf(buf, sizeof buf, "%lu g", (unsigned long)snap->treasury);
+	render_text(RENDER_TOP, 150, 144, RENDER_SURFACE, buf);
+	render_icon(RENDER_TOP, RENDER_ICON_TIER, 130, 160, RENDER_SPR_FRONT);
+	snprintf(buf, sizeof buf, "Tier %u %s", (unsigned)tier_now,
+	         tier_word(tier_now));
+	render_text(RENDER_TOP, 150, 164, RENDER_SURFACE, buf);
+}
+
+static void paint_tabs(void) {
+	static const char *const TABS[2] = {"Recruit", "Formation"};
+	for (int i = 0; i < 2; ++i) {
+		const int x = 6 + i * 82;
+		if (tab == i) {
+			render_rect(RENDER_BOTTOM, x, 4, 78, 18, RENDER_PAPER);
+		}
+		render_text(RENDER_BOTTOM, x + 39 - render_text_width(TABS[i]) / 2, 8,
+		            tab == i ? RENDER_INK : RENDER_LINE, TABS[i]);
+	}
+}
+
+static void paint_deploy_at(int x, int y, int w, int h, bool focused) {
+	char buf[40];
+	const int8_t dp = sim_deploy_province();
+	const bool ok = dp >= 0 && sim_roster() > 0u;
+	snprintf(buf, sizeof buf, "Deploy to %s",
+	         dp >= 0 ? sim_province_table(NULL)[dp].name : "-");
+	render_button(RENDER_BOTTOM, x, y, w, h, buf,
+	              !ok ? RENDER_BTN_DISABLED
+	                  : focused ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+	render_icon(RENDER_BOTTOM, RENDER_ICON_BATTLE, x + w - 18, y + h / 2 - 8,
+	            RENDER_SPR_FRONT);
+	if (focused) {
+		render_ring(RENDER_BOTTOM, x, y, w, h);
+	}
+}
+
+static void paint_deploy(int y, int h, bool focused) {
+	paint_deploy_at(6, y, 244, h, focused);
+}
+
+static void paint(void) {
+	char buf[48];
+	const uint32_t step = ui_anim_step();
+	render_backdrop(RENDER_BOTTOM, RENDER_BD_FRAME_SHEET, RENDER_GOD_NONE);
+	paint_tabs();
+	if (tab == 0) {
+		const uint32_t cost = (uint32_t)SIM_COMPANY_COST * SIM_PULSE_QTY;
+		char reason[64];
+		const bool blocked = confirm_blocked(reason, sizeof reason);
+		render_panel(RENDER_BOTTOM, 6, 26, 244, 36, RENDER_PANEL_SHEET);
+		render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES, RENDER_CLS_SPEAR,
+		                RENDER_ANIM_IDLE, step, 14, 36, RENDER_SPR_FRONT);
+		render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES, RENDER_CLS_ARCHER,
+		                RENDER_ANIM_IDLE, step + 1u, 28, 36, RENDER_SPR_FRONT);
+		render_text(RENDER_BOTTOM, 50, 33, RENDER_INK, "Companies");
+		snprintf(buf, sizeof buf, "+%u = %lu g. Chest %u/%u.",
+		         SIM_PULSE_QTY, (unsigned long)cost, (unsigned)sim_chest(),
+		         SIM_CHEST_CAP);
+		render_text(RENDER_BOTTOM, 50, 45, RENDER_INK2, buf);
+		render_button(RENDER_BOTTOM, 204, 32, 40, 16, "+5",
+		              blocked ? RENDER_BTN_DISABLED
+		              : focus == 0 ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+		if (focus == 0) {
+			render_ring(RENDER_BOTTOM, 6, 26, 244, 36);
+		}
+		snprintf(buf, sizeof buf, "Confirm %u  -%lu g", SIM_PULSE_QTY,
+		         (unsigned long)cost);
+		render_button(RENDER_BOTTOM, 6, 68, 244, 24, buf,
+		              blocked ? RENDER_BTN_DISABLED
+		              : focus == 1 ? RENDER_BTN_FOCUS : RENDER_BTN_NORMAL);
+		if (focus == 1) {
+			render_ring(RENDER_BOTTOM, 6, 68, 244, 24);
+		}
+		if (blocked) {
+			render_text(RENDER_BOTTOM, 10, 150, RENDER_CRIT, reason);
+		}
+		paint_deploy(100, 24, focus == 2);
+	} else {
+		const uint8_t *form = sim_formation();
+		for (int i = 0; i < (int)SIM_FORMATION_SLOTS; ++i) {
+			const int x = 2 + (i % 5) * 51;
+			const int y = 26 + (i / 5) * 40;
+			render_panel(RENDER_BOTTOM, x, y, 48, 36, RENDER_PANEL_SHEET);
+			snprintf(buf, sizeof buf, "%02d", i + 1);
+			render_text(RENDER_BOTTOM, x + 6, y + 6, RENDER_INK2, buf);
+			if (form[i] != 0xFFu) {
+				render_portrait(RENDER_BOTTOM, RENDER_CIV_HELLENES,
+				                arm_of(form[i]), RENDER_ANIM_IDLE,
+				                step + (uint32_t)i, x + 24, y + 14,
+				                RENDER_SPR_FRONT);
+			} else {
+				render_text(RENDER_BOTTOM, x + 6, y + 22, RENDER_LINE,
+				            "Empty");
+			}
+			if (swap_pending && first_selected == i) {
+				render_box(RENDER_BOTTOM, x + 2, y + 2, 44, 32,
+				           RENDER_ACCENT);
+			}
+			if (focus == i) {
+				render_ring(RENDER_BOTTOM, x, y, 48, 36);
+			}
+		}
+		{
+			const uint8_t k = sim_formation_kind();
+			snprintf(buf, sizeof buf, "< %s >", sim_formation_name(k));
+			render_button(RENDER_BOTTOM, 6, 108, 116, 18, buf,
+			              focus == KIND_FOCUS ? RENDER_BTN_FOCUS
+			                                  : RENDER_BTN_NORMAL);
+			render_icon(RENDER_BOTTOM, k == SIM_FORM_CIRCLE || k == SIM_FORM_PHALANX
+			                               ? RENDER_ICON_DEFENSE : RENDER_ICON_ATTACK,
+			            8, 109, RENDER_SPR_FRONT);
+			if (focus == KIND_FOCUS) {
+				render_ring(RENDER_BOTTOM, 6, 108, 116, 18);
+			}
+		}
+		paint_deploy_at(126, 108, 124, 18, focus == FORM_DEPLOY_FOCUS);
+	}
+}
+
 void base_frame(void) {
 	char line[80];
 	const sim_snapshot_t *snap = sim_snapshot();
@@ -247,6 +458,14 @@ void base_frame(void) {
 	 * the pixel blit lands with the B27/B31 art sweep. The text row
 	 * beside it carries the word copy for the emulator console.          */
 	tier_band_paint(tier_now);
+	if (tab == 0) {
+		ui_draw_layout(BASE_ROWS_RECRUIT, (uint8_t)(sizeof BASE_ROWS_RECRUIT /
+		                                            sizeof BASE_ROWS_RECRUIT[0]));
+	} else {
+		ui_draw_layout(BASE_ROWS, (uint8_t)(sizeof BASE_ROWS / sizeof BASE_ROWS[0]));
+	}
+	paint_top(snap, tier_now);
+	paint();
 
 	/* tier band (24 px pixel geometry lands with B17; text now)          */
 	snprintf(line, sizeof line, "TIER %u - %s",
@@ -358,7 +577,20 @@ void base_frame(void) {
 		}
 		if (swap_pending) {
 			ui_draw_text(0, 7, "Slot picked - A on a second slot");
+		} else if (status_frames == 0) {
+			/* the kind's trade-off, and the ground it will meet        */
+			const int8_t dp = sim_deploy_province();
+			snprintf(line, sizeof line, "%s: %s%s%s",
+			         sim_formation_name(sim_formation_kind()),
+			         sim_formation_brief(sim_formation_kind()),
+			         dp >= 0 ? " " : "",
+			         dp >= 0 ? sim_terrain_brief(sim_front_terrain((uint8_t)dp)) : "");
+			ui_draw_text(0, 7, line);
 		}
+		snprintf(line, sizeof line, "FORMATION %s%s",
+		         sim_formation_name(sim_formation_kind()),
+		         focus == KIND_FOCUS ? " <" : "");
+		ui_draw_text(0, 10, line);
 	}
 
 	/* deploy door + SaveStatus inline footer                             */

@@ -8,6 +8,7 @@
 #include <nds.h>
 #include <stdio.h>
 #include <fat.h>
+#include <sys/iosupport.h>
 
 #include "contracts/render.h"
 #include "contracts/save.h"
@@ -34,7 +35,11 @@ static void fs_boot(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-	consoleDemoInit();
+	/* Both screens belong to the art (render owns VRAM): the trace and
+	 * log lines go to the emulator's NOCASH debug channel instead of an
+	 * on-screen console - still the only egress (constitution 4).      */
+	consoleDebugInit(DebugDevice_NOCASH);
+	devoptab_list[STD_OUT] = devoptab_list[STD_ERR];
 	iprintf("WAR TABLE\n");
 	iprintf("t=title ev=boot begin\n");
 

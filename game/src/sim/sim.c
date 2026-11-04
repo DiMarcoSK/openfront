@@ -56,7 +56,7 @@ static uint32_t boot_seed;             /* run identity from save/boot      */
  * re-enqueues the ring) and short-circuits with 0 debit and no reject.
  * seq 0 means "not stamped" (the host fixture path) and stays exempt: the
  * v1 contract treats 0 as no idempotency key.                             */
-#define SIM_SEQ_TABLE ((uint32_t)10u) /* B21: codes 7/8/9 keyed too     */
+#define SIM_SEQ_TABLE ((uint32_t)12u) /* B21: 7/8/9; depth: 10/11 too   */
 static uint32_t applied_seq[SIM_SEQ_TABLE];
 
 /* ---- speed x1/x2/x4 (spec-04 R4/R5, B20) -------------------------------- */
@@ -73,9 +73,48 @@ static uint8_t battle_province;
 static uint8_t battle_turn;
 static uint8_t battle_enemies;
 static uint8_t battle_roster_start;
+static uint8_t battle_losses;          /* companies lost to attrition       */
+static uint8_t battle_enemies_open;    /* the strength the front opened with */
+static uint16_t battle_roster_deploy;  /* full u16 roster at deploy (Retry) */
 static battle_outcome_t sealed;
 static bool sealed_valid;
 static bool sealed_applied;
+
+/* ---- battle depth (GAME_DESIGN 7-8): formation, terrain, morale, flanks,
+ * the general's abilities and the gods' own rules. The tables are sim
+ * data (the art in ui/scene.c only dresses the same fronts); every rule
+ * is O(1) per turn and deterministic per seed (ADR-0007).                */
+static uint8_t formation_kind;         /* SIM_FORM_*, rides agg->formation */
+
+static const uint8_t FRONT_TERRAIN[FRONT_COUNT] = {
+	SIM_TERRAIN_ARENA, SIM_TERRAIN_DESERT, SIM_TERRAIN_ARENA,
+	SIM_TERRAIN_PLAINS, SIM_TERRAIN_HIGHLANDS, SIM_TERRAIN_ARENA,
+	SIM_TERRAIN_ARENA, SIM_TERRAIN_ARENA,
+};
+static const uint8_t FRONT_BOSS[FRONT_COUNT] = {
+	SIM_BOSS_ARES, SIM_BOSS_NONE, SIM_BOSS_ZEUS, SIM_BOSS_NONE,
+	SIM_BOSS_NONE, SIM_BOSS_POSEIDON, SIM_BOSS_KRONOS, SIM_BOSS_HADES,
+};
+
+/* the live battle extras: one struct so the undo journal copies it whole */
+typedef struct {
+	uint8_t morale;                    /* ours 0..100                      */
+	uint8_t foe_morale;                /* theirs 0..100 (gods never break) */
+	uint8_t flank;                     /* SIM_FLANK_*                      */
+	uint8_t cooldown[SIM_ABILITIES];   /* turns until ready                */
+	uint8_t boss_phase;                /* 0 = no god, 1, 2 (enraged)       */
+	uint8_t flood_turns;               /* Poseidon: strikes -1 while > 0   */
+	uint8_t turn_cap;                  /* 9, +1 with the harpe             */
+	bool charge_armed;                 /* +3 on the next resolution        */
+	bool rally_armed;                  /* calm ranks until the next turn   */
+	bool wavering;                     /* latches: one alert per crossing  */
+	bool foe_routing;
+	bool relic_guard;                  /* the helm spares the first loss   */
+	uint8_t wrath;                     /* uncountered god strikes so far   */
+	uint8_t event;                     /* SIM_EVT_* of the latest alert    */
+} battle_ext_t;
+static battle_ext_t bx;
+static uint16_t event_seq;             /* monotonic: ui shows each once    */
 
 /* ---- orders + one-tap undo (B21, spec-04 T020-T025) --------------------- */
 #define ORDER_CAP ((uint32_t)32u)
@@ -102,6 +141,8 @@ typedef struct {
 	battle_outcome_t sealed;
 	uint32_t rng_state;
 	uint16_t roster;
+	uint8_t losses;
+	battle_ext_t bx;
 	uint8_t n_pending;
 	uint8_t pending[ORDER_CAP];
 } sim_journal_t;
@@ -115,7 +156,28 @@ static uint32_t rng_next(void) {
 }
 
 static uint8_t taken_mask;             /* front bits in the save payload   */
+static bool midturn_rejected;          /* B22: last ingest held battle state */
 static uint16_t roster;                /* owned companies (chest cap 300)  */
+
+/* front_enemies(): the strength a front opens with. Mortal fronts scale
+ * with the threat; a god's front adds the divine host (GAME_DESIGN 8:
+ * longer, more demanding battles).                                      */
+static uint8_t front_enemies(uint8_t province, uint16_t army) {
+	const uint32_t threat = provinces[province & 7u].threat;
+	uint32_t n = 8u + 4u * threat;
+	if (FRONT_BOSS[province & 7u] != SIM_BOSS_NONE) {
+		/* the god answers part of the army it faces: progression
+		 * helps, but never makes a god trivial (GAME_DESIGN 8)       */
+		n += 8u + army / 4u;
+	}
+	return (uint8_t)(n > 200u ? 200u : n);
+}
+
+/* army_bonus(): strikes +1 at 10, 24 and 48 companies - diminishing,
+ * so a bigger army feels stronger without replacing the plan.         */
+static int army_bonus(uint16_t army) {
+	return (army >= 48u) ? 3 : (army >= 24u) ? 2 : (army >= 10u) ? 1 : 0;
+}
 
 static uint8_t taken_count(void) {
 	uint8_t n = 0u;
@@ -151,12 +213,17 @@ static void reset_run_state(void) {
 	deploy_province = -1;
 	changed_province = 0xFFu;
 	taken_mask = 0u;
+	midturn_rejected = false;
 	memset(applied_seq, 0, sizeof applied_seq); /* T031: idempotency keyed */
 	battle_active = false;
+	battle_turn = 0u;     /* B22: a resumed run never carries a turn */
+	battle_enemies = 0u;
 	sealed_valid = false;
 	sealed_applied = false;
 	rng_state = 1u;
 	battle_id_seq = 0u;
+	formation_kind = SIM_FORM_LINE;
+	memset(&bx, 0, sizeof bx);
 }
 
 /* ---- lifecycle ---------------------------------------------------------- */
@@ -174,7 +241,11 @@ void sim_ingest_save(const save_aggregate_t *agg, uint16_t day) {
 		sim_autoform();
 		return;
 	}
-	snap.treasury = agg->treasury;
+	/* B25 range clamps (spec-06 T012): a CRC-valid but hostile or
+	 * stale record can never push the run past its caps - treasury,
+	 * roster, chest and the muster queue are clamped, never trusted.  */
+	snap.treasury = (agg->treasury > SIM_TREASURY_CAP) ? SIM_TREASURY_CAP
+	                                                   : agg->treasury;
 	snap.day = day ? day : 1u;
 	/* B13 selection restore: out-of-range byte -> row 0, never a
 	 * VERIFY_FAIL (spec-02 T033).                                     */
@@ -183,10 +254,30 @@ void sim_ingest_save(const save_aggregate_t *agg, uint16_t day) {
 	                    : 0u;
 	rng_state = (agg->rng_state != 0u) ? agg->rng_state : 1u;
 	boot_seed = (agg->seed != 0u) ? agg->seed : 1u;
-	roster = agg->unit_count;
+	roster = (agg->unit_count > SIM_CHEST_CAP) ? (uint16_t)SIM_CHEST_CAP
+	                                          : agg->unit_count;
 	taken_mask = agg->province_state[0];
+	/* the formation kind rides the v1 `formation` byte (0 = Line on
+	 * every record written before it existed); a hostile byte clamps. */
+	formation_kind = (agg->formation < SIM_FORM_COUNT) ? agg->formation
+	                                                   : SIM_FORM_LINE;
 	chest = (uint16_t)agg->reserved[0] | ((uint16_t)agg->reserved[1] << 8);
-	muster_pending = agg->pending_reward;
+	if (chest > SIM_CHEST_CAP) {
+		chest = SIM_CHEST_CAP;
+	}
+	if (chest < roster) {
+		chest = roster; /* the chest counts every company ever bought */
+	}
+	muster_pending = (agg->pending_reward > SIM_PENDING_CAP)
+	                     ? (uint8_t)SIM_PENDING_CAP
+	                     : agg->pending_reward;
+	if ((uint16_t)muster_pending + roster > SIM_CHEST_CAP) {
+		muster_pending = (uint8_t)(SIM_CHEST_CAP - roster);
+	}
+	/* B22 (spec-04 T029): a battle never resumes mid-turn. A record
+	 * carrying the in-battle marker is refused (the run restarts at the
+	 * campaign table, the next deploy starts at turn 1).               */
+	midturn_rejected = (agg->reserved[3] != 0u);
 	muster_active_batch = (muster_pending > 0u);
 	muster_batch = muster_pending;
 	sim_autoform();
@@ -219,6 +310,7 @@ void sim_export_aggregate(save_aggregate_t *out) {
 	out->rng_state = rng_state;
 	memset(out->province_state, 0, sizeof out->province_state);
 	out->province_state[0] = taken_mask;
+	out->formation = formation_kind;
 	out->unit_count = (uint16_t)roster;
 	out->unit_type_aggregates[0] = (uint16_t)roster;
 	out->pending_reward = muster_pending;
@@ -228,6 +320,19 @@ void sim_export_aggregate(save_aggregate_t *out) {
 	out->reserved[0] = (uint8_t)(chest & 0xFFu);
 	out->reserved[1] = (uint8_t)((chest >> 8u) & 0xFFu);
 	out->reserved[2] = muster_active_batch ? 1u : 0u;
+	out->reserved[3] = 0u; /* B22: battle state is never persisted     */
+}
+
+bool sim_ingest_rejected_midturn(void) {
+	return midturn_rejected;
+}
+
+uint8_t sim_battle_losses(void) {
+	return battle_losses;
+}
+
+uint8_t sim_battle_enemies_start(void) {
+	return battle_enemies_open;
 }
 
 /* ---- run mode (ADR-0001: menus add 0 ticks of either kind) ------------- */
@@ -365,6 +470,8 @@ static void journal_capture(void) {
 	journal.sealed = sealed;
 	journal.rng_state = rng_state;
 	journal.roster = roster;
+	journal.losses = battle_losses;
+	journal.bx = bx;
 	journal.n_pending = pending_n;
 	memcpy(journal.pending, pending, sizeof pending);
 	journal_valid = true;
@@ -428,11 +535,252 @@ uint16_t sim_battle_state_hash(void) {
 	h *= 0x01000193u;
 	h ^= (uint8_t)((roster >> 8) & 0xFFu);
 	h *= 0x01000193u;
+	{
+		const uint8_t ext[8] = {
+		    bx.morale, bx.foe_morale, bx.flank,
+		    bx.cooldown[SIM_ABILITY_RALLY], bx.cooldown[SIM_ABILITY_CHARGE],
+		    bx.boss_phase, bx.flood_turns, bx.wrath,
+		};
+		for (int i = 0; i < 8; ++i) {
+			h ^= ext[i];
+			h *= 0x01000193u;
+		}
+	}
 	for (uint8_t i = 0; i < pending_n; ++i) {
 		h ^= pending[i];
 		h *= 0x01000193u;
 	}
 	return (uint16_t)((h >> 16) ^ (h & 0xFFFFu));
+}
+
+/* ---- battle depth: data, copy and the general (GAME_DESIGN 7-8) --------- */
+
+static const char *const FORM_NAMES[SIM_FORM_COUNT] = {
+	"Line", "Phalanx", "Wedge", "Circle",
+};
+static const char *const FORM_BRIEFS[SIM_FORM_COUNT] = {
+	"Balanced. No edge, no gap.",
+	"Few losses ahead. Flanks bleed.",
+	"Impact: +2 for 3 turns. Bleeds.",
+	"Flanks safe. Strikes -1.",
+};
+static const char *const TERRAIN_NAMES[SIM_TERRAIN_COUNT] = {
+	"Plains", "Desert", "Highlands", "Arena",
+};
+static const char *const TERRAIN_BRIEFS[SIM_TERRAIN_COUNT] = {
+	"Open ground: cavalry flanks.",
+	"Heat: morale -3 a turn.",
+	"High ground: Hold strikes +1.",
+	"Divine ground: the god rules.",
+};
+static const char *const BOSS_NAMES[SIM_BOSSES] = {
+	"Zeus", "Poseidon", "Hades", "Ares", "Kronos",
+};
+/* the omen names the counter one turn before the god acts (GDD 8: the
+ * player must have time to understand the threat)                       */
+static const char *const BOSS_OMENS[SIM_BOSSES] = {
+	"Storm gathers: Fall back!",
+	"The tide stirs: Hold!",
+	"The dead stir: Charge!",
+	"Ares stirs fury: Rally!",
+	"Time bends: Flank!",
+};
+static const char *const BOSS_STRIKES[SIM_BOSSES] = {
+	"Thunderbolt! A company falls.",
+	"Flood! Our strikes weaken.",
+	"The dead rise: 2 more foes.",
+	"Ares' fury: blood both ways.",
+	"Kronos steals a turn!",
+};
+static const char *const RELIC_NAMES[SIM_BOSSES] = {
+	"Keraunos", "Trident", "Helm", "Spear", "Harpe",
+};
+static const char *const RELIC_BRIEFS[SIM_BOSSES] = {
+	"Turn 1 strike +1.",
+	"Flank order strikes +1.",
+	"First loss each battle spared.",
+	"Morale starts at 75.",
+	"Battles last 10 turns.",
+};
+static const char *const ABILITY_NAMES[SIM_ABILITIES] = {"Rally", "Charge"};
+
+#define RELIC_BIT(b) ((uint8_t)(1u << (b)))
+
+uint8_t sim_relic_mask(void) {
+	/* a relic is the permanent reward of a god's front (GDD 8): derived
+	 * from the taken bits, so it costs 0 save bytes and never desyncs   */
+	uint8_t m = 0u;
+	for (uint8_t p = 0; p < (uint8_t)FRONT_COUNT; ++p) {
+		if (FRONT_BOSS[p] != SIM_BOSS_NONE && sim_front_taken(p)) {
+			m |= RELIC_BIT(FRONT_BOSS[p]);
+		}
+	}
+	return m;
+}
+
+uint8_t sim_formation_kind(void) {
+	return formation_kind;
+}
+
+const char *sim_formation_name(uint8_t kind) {
+	return FORM_NAMES[kind < SIM_FORM_COUNT ? kind : 0u];
+}
+
+const char *sim_formation_brief(uint8_t kind) {
+	return FORM_BRIEFS[kind < SIM_FORM_COUNT ? kind : 0u];
+}
+
+uint8_t sim_front_terrain(uint8_t province) {
+	return FRONT_TERRAIN[province & 7u];
+}
+
+const char *sim_terrain_name(uint8_t terrain) {
+	return TERRAIN_NAMES[terrain < SIM_TERRAIN_COUNT ? terrain : 0u];
+}
+
+const char *sim_terrain_brief(uint8_t terrain) {
+	return TERRAIN_BRIEFS[terrain < SIM_TERRAIN_COUNT ? terrain : 0u];
+}
+
+uint8_t sim_front_boss(uint8_t province) {
+	return FRONT_BOSS[province & 7u];
+}
+
+const char *sim_boss_name(uint8_t boss) {
+	return (boss < SIM_BOSSES) ? BOSS_NAMES[boss] : "";
+}
+
+const char *sim_boss_omen(uint8_t boss) {
+	return (boss < SIM_BOSSES) ? BOSS_OMENS[boss] : "";
+}
+
+const char *sim_relic_name(uint8_t boss) {
+	return (boss < SIM_BOSSES) ? RELIC_NAMES[boss] : "";
+}
+
+const char *sim_relic_brief(uint8_t boss) {
+	return (boss < SIM_BOSSES) ? RELIC_BRIEFS[boss] : "";
+}
+
+uint8_t sim_battle_morale(void) {
+	return bx.morale;
+}
+
+uint8_t sim_battle_foe_morale(void) {
+	return bx.foe_morale;
+}
+
+uint8_t sim_battle_flank(void) {
+	return bx.flank;
+}
+
+uint8_t sim_battle_boss_phase(void) {
+	return bx.boss_phase;
+}
+
+uint8_t sim_battle_turn_cap(void) {
+	if (battle_active || sealed_valid) {
+		return bx.turn_cap;
+	}
+	return (uint8_t)(SIM_BATTLE_TURNS +
+	                 ((sim_relic_mask() & RELIC_BIT(SIM_BOSS_KRONOS)) ? 1u : 0u));
+}
+
+uint8_t sim_ability_cooldown(uint8_t ability) {
+	return (ability < SIM_ABILITIES) ? bx.cooldown[ability] : 0xFFu;
+}
+
+bool sim_charge_armed(void) {
+	return bx.charge_armed;
+}
+
+uint8_t sim_battle_event(void) {
+	return bx.event;
+}
+
+uint16_t sim_battle_event_seq(void) {
+	return event_seq;
+}
+
+const char *sim_battle_event_copy(void) {
+	static char copy[40];
+	const uint8_t boss = FRONT_BOSS[battle_province];
+	switch (bx.event) {
+	case SIM_EVT_FLANK_HELD:   return "Flank held: the ring stands.";
+	case SIM_EVT_WAVERING:     return "Morale wavers. Rally or Hold.";
+	case SIM_EVT_FOE_ROUT:     return "The enemy line breaks!";
+	case SIM_EVT_FLANK_BROKEN: return "Our flank is broken!";
+	case SIM_EVT_CAV_CHARGE:   return "Enemy cavalry hits a flank!";
+	case SIM_EVT_BOSS_OMEN:    return sim_boss_omen(boss);
+	case SIM_EVT_BOSS_COUNTERED:
+		snprintf(copy, sizeof copy, "%s's blow is countered!",
+		         sim_boss_name(boss));
+		return copy;
+	case SIM_EVT_BOSS_STRIKE:
+		return (boss < SIM_BOSSES) ? BOSS_STRIKES[boss] : "";
+	case SIM_EVT_BOSS_PHASE:
+		snprintf(copy, sizeof copy, "%s enrages: phase 2!",
+		         sim_boss_name(boss));
+		return copy;
+	case SIM_EVT_COLLAPSE:     return "A company broke and fled!";
+	case SIM_EVT_RALLY:        return "The general rallies the line.";
+	case SIM_EVT_CHARGE:       return "The general leads the charge!";
+	default:                   return NULL;
+	}
+}
+
+/* battle_open(): the extras every fresh attempt starts from (deploy and
+ * Retry share it, so attempt 2 == attempt 1 holds for them too).        */
+static void battle_open(void) {
+	const uint8_t boss = FRONT_BOSS[battle_province];
+	const uint8_t relics = sim_relic_mask();
+	memset(&bx, 0, sizeof bx);
+	bx.morale = (relics & RELIC_BIT(SIM_BOSS_ARES)) ? 75u : 60u;
+	bx.foe_morale = (boss != SIM_BOSS_NONE)
+	                    ? SIM_MORALE_MAX
+	                    : (uint8_t)(50u + 10u * provinces[battle_province].threat);
+	bx.boss_phase = (boss != SIM_BOSS_NONE) ? 1u : 0u;
+	bx.turn_cap = (uint8_t)(SIM_BATTLE_TURNS +
+	                        ((relics & RELIC_BIT(SIM_BOSS_KRONOS)) ? 1u : 0u));
+	bx.relic_guard = (relics & RELIC_BIT(SIM_BOSS_HADES)) != 0u;
+}
+
+/* ability_use(): the general acts at dispatch, between turns (GDD 7: no
+ * micro of soldiers, limited by cooldowns). It is not an order: it
+ * skips the ring and closes undo, so a cooldown can never be refunded. */
+static sim_result_t ability_use(uint8_t ability) {
+	if (!battle_active || sealed_valid) {
+		order_say("Orders need a live battle.");
+		return SIM_BAD_ARG;
+	}
+	if (ability >= SIM_ABILITIES) {
+		return SIM_BAD_ARG;
+	}
+	if (bx.cooldown[ability] > 0u) {
+		snprintf(order_status, sizeof order_status, "%s needs %u more turn%s.",
+		         ABILITY_NAMES[ability], (unsigned)bx.cooldown[ability],
+		         bx.cooldown[ability] == 1u ? "" : "s");
+		order_status_valid = true;
+		return SIM_BAD_ARG;
+	}
+	if (ability == SIM_ABILITY_RALLY) {
+		const unsigned m = (unsigned)bx.morale + 35u;
+		bx.morale = (uint8_t)(m > SIM_MORALE_MAX ? SIM_MORALE_MAX : m);
+		bx.wavering = (bx.morale < 40u) && bx.wavering;
+		bx.flank = SIM_FLANK_SECURE; /* the general re-forms the wings */
+		bx.rally_armed = true;
+		bx.cooldown[ability] = SIM_RALLY_COOLDOWN;
+		bx.event = SIM_EVT_RALLY;
+		order_say("Rally! Morale +35.");
+	} else {
+		bx.charge_armed = true;
+		bx.cooldown[ability] = SIM_CHARGE_COOLDOWN;
+		bx.event = SIM_EVT_CHARGE;
+		order_say("Charge! Next strike +3.");
+	}
+	event_seq++;
+	journal_clear();
+	return SIM_OK;
 }
 
 /* ---- command application (spec-02 R4-R7, one command one debit) -------- */
@@ -530,10 +878,14 @@ static sim_result_t sim_apply_body(const sim_cmd_t *cmd) {
 		/* Enemy strength scales with the threat level (spec-02 R1,
 		 * the threat field stays read-only for battles at B10).        */
 		battle_enemies =
-		    (uint8_t)(6u + 3u * provinces[province].threat);
+		    front_enemies(province, roster);
+		battle_enemies_open = battle_enemies;
 		battle_roster_start =
 		    (uint8_t)(roster > 255u ? 255u : roster);
+		battle_roster_deploy = roster;
+		battle_losses = 0u;
 		sealed_applied = false;
+		battle_open();
 		++battle_id_seq;
 		return SIM_OK;
 	}
@@ -588,12 +940,25 @@ static sim_result_t sim_apply_body(const sim_cmd_t *cmd) {
 		sealed = journal.sealed;
 		rng_state = journal.rng_state;
 		roster = journal.roster;
+		battle_losses = journal.losses;
+		bx = journal.bx;
 		pending_n = journal.n_pending;
 		memcpy(pending, journal.pending, sizeof pending);
 		journal_valid = false; /* single level: consumed once           */
 		order_say("Undo: pre-order restored.");
 		return SIM_OK;
 	}
+	case 10: /* the general's ability: arg = SIM_ABILITY_* (GDD 7)      */
+		return ability_use(cmd->arg);
+	case 11: /* formation kind for the next deploy (GDD 7, Base tab)    */
+		if (cmd->arg >= SIM_FORM_COUNT || battle_active) {
+			return SIM_BAD_ARG; /* the line forms before the march */
+		}
+		if (formation_kind != cmd->arg) {
+			formation_kind = cmd->arg;
+			save_set_dirty();
+		}
+		return SIM_OK;
 	default:
 		return SIM_BAD_ARG;
 	}
@@ -757,15 +1122,26 @@ uint8_t sim_battle_units_start(void) {
 	return battle_roster_start;
 }
 
-/* sim_battle_step(): one 10 Hz auto-resolve frame, O(1). Ends by turn 9
- * or when the front runs out of enemies (victory); exactly one seal.     */
+static int clamp_morale(int m) {
+	return (m < 0) ? 0 : (m > (int)SIM_MORALE_MAX) ? (int)SIM_MORALE_MAX : m;
+}
+
+/* the turn's alert: SIM_EVT_* values are ordered by priority, so the
+ * most critical thing that happened this turn is the one shown         */
+#define OFFER(e) do { if ((uint8_t)(e) > evt) { evt = (uint8_t)(e); } } while (0)
+
+/* sim_battle_step(): one turn of the auto-resolve, O(1). Ends at the
+ * turn cap, when the front runs out of enemies (victory) or when the
+ * division is gone (defeat); exactly one seal. The queued order shapes
+ * the turn (B21); formation, terrain, morale, flanks, the general and
+ * the god's own rules layer on top (GAME_DESIGN 7-8).                    */
 void sim_battle_step(void) {
 	if (!battle_active || sealed_valid) {
 		return;
 	}
 	/* B21: one queued order applies once at this resolution (T021):
 	 * FIFO pop, then the effect shapes THIS turn's damage/attrition.  */
-	uint8_t order;
+	uint8_t order = 0xFFu;
 	bool has_order = false;
 	if (pending_n > 0u) {
 		order = pending[0];
@@ -774,38 +1150,230 @@ void sim_battle_step(void) {
 	}
 	battle_turn++;
 	const uint32_t roll = rng_next();
-	uint8_t dmg = (uint8_t)((roll % 2u) + 1u);        /* 1..2 dmg  */
+	const uint32_t fate = rng_next(); /* flank dice: the high bits    */
+	const uint8_t boss = FRONT_BOSS[battle_province];
+	const uint8_t terrain = FRONT_TERRAIN[battle_province];
+	const uint8_t relics = sim_relic_mask();
+	const bool holding = has_order && order == SIM_ORDER_HOLD;
+	const bool fallback = has_order && order == SIM_ORDER_FALLBACK;
+	/* the flanks open when the line presses on without a plan for them */
+	const bool exposed = !has_order || order == SIM_ORDER_ADVANCE;
+	const bool charged = bx.charge_armed;
+	const bool rallied = bx.rally_armed;
+	bx.charge_armed = false;
+	bx.rally_armed = false;
+	uint8_t evt = SIM_EVT_NONE;
+	/* 1..2 dmg, + the army bonus: numbers matter, but a
+	 * plan (order, formation, the god's counter) matters more          */
+	int dmg = (int)(roll % 2u) + 1 + army_bonus(roster);
+	int losses = 0;
+	int raise = 0;
+	int morale = bx.morale;
 	bool suppress_attrition = false;
 	bool force_attrition = false;
 	if (has_order) {
 		switch (order) {
 		case SIM_ORDER_ADVANCE:
-			dmg = (uint8_t)(dmg + 1u);              /* 2..3       */
+			dmg += 1;                                /* 2..3       */
 			break;
 		case SIM_ORDER_HOLD:
 			suppress_attrition = true;               /* no own loss */
 			break;
 		case SIM_ORDER_FLANK:
-			dmg = (uint8_t)(dmg + 2u);              /* 3..4       */
+			dmg += 2;                                /* 3..4       */
 			force_attrition = (roster > 0u);
 			break;
 		case SIM_ORDER_FALLBACK:
-			dmg = 0u;                                /* no kill    */
+			dmg = 0;                                 /* no kill    */
 			suppress_attrition = true;
 			break;
 		default:
 			break;
 		}
 	}
-	battle_enemies =
-	    (uint8_t)((battle_enemies > dmg) ? (battle_enemies - dmg)
-	                                     : (uint8_t)0u);
-	ops_counter += 3u; /* rolled damage, enemy update, chips update */
-	if ((!suppress_attrition && (((roll >> 16u) & 3u) == 0u && roster > 0u)) ||
+	if (!fallback) {
+		/* the wedge hits on impact (driven, first 3 turns); the
+		 * ring never drops below 2                                 */
+		if (formation_kind == SIM_FORM_WEDGE && has_order && battle_turn <= 3u &&
+		    (order == SIM_ORDER_ADVANCE || order == SIM_ORDER_FLANK)) dmg += 2;
+		if (formation_kind == SIM_FORM_CIRCLE && dmg > 2) dmg -= 1;
+		if (terrain == SIM_TERRAIN_HIGHLANDS && holding) dmg += 1;
+		if (charged) dmg += 3;
+		if (battle_turn == 1u && (relics & RELIC_BIT(SIM_BOSS_ZEUS))) dmg += 1;
+		if (has_order && order == SIM_ORDER_FLANK &&
+		    (relics & RELIC_BIT(SIM_BOSS_POSEIDON))) dmg += 1;
+		if (bx.wavering && dmg > 0) dmg -= 1;    /* shaken arms     */
+		if (bx.foe_routing) dmg += 1;            /* backs turned    */
+		if (bx.flood_turns > 0u && dmg > 1) dmg -= 1;
+	}
+	if (bx.flood_turns > 0u) {
+		bx.flood_turns--;
+	}
+	/* attrition: the formation sets how often the front rank bleeds   */
+	const uint32_t amask = (formation_kind == SIM_FORM_PHALANX) ? 7u
+	                       : (formation_kind == SIM_FORM_WEDGE) ? 1u : 3u;
+	if ((!suppress_attrition && ((roll >> 16u) & amask) == 0u) ||
 	    force_attrition) {
+		losses++;
+	}
+	/* an outnumbered line bleeds faster unless it digs in             */
+	if (!suppress_attrition && battle_enemies >= 2u * roster) {
+		losses++;
+	}
+	/* the enemy tries the flanks; open plains are cavalry country      */
+	if (exposed) {
+		const uint32_t den = (terrain == SIM_TERRAIN_PLAINS) ? 3u
+		                     : (terrain == SIM_TERRAIN_HIGHLANDS) ? 8u : 5u;
+		if (((fate >> 24u) % den) == 0u) {
+			if (formation_kind == SIM_FORM_CIRCLE) {
+				bx.flank = SIM_FLANK_PRESSED;
+				morale += 3;
+				OFFER(SIM_EVT_FLANK_HELD);
+			} else {
+				const bool phalanx = formation_kind == SIM_FORM_PHALANX;
+				losses += phalanx ? 2 : 1;
+				morale -= phalanx ? 12 : 6;
+				bx.flank = SIM_FLANK_BROKEN;
+				OFFER(terrain == SIM_TERRAIN_PLAINS ? SIM_EVT_CAV_CHARGE
+				                                    : SIM_EVT_FLANK_BROKEN);
+			}
+		} else if (bx.flank > 0u) {
+			bx.flank--;
+		}
+	} else {
+		bx.flank = holding ? (uint8_t)SIM_FLANK_SECURE
+		           : (bx.flank > 0u) ? (uint8_t)(bx.flank - 1u)
+		                             : (uint8_t)SIM_FLANK_SECURE;
+	}
+	/* the god acts on its own clock and telegraphs it one turn early   */
+	if (boss != SIM_BOSS_NONE) {
+		/* phase 1 acts on turns 2, 5, 8; enraged, every even turn   */
+		const uint8_t every = (bx.boss_phase >= 2u) ? 2u : 3u;
+		const uint8_t clock = (uint8_t)((battle_turn + 1u) % every);
+		if (clock == 0u) {
+			bool countered = false;
+			/* each uncountered strike feeds the next (wrath): a god
+			 * ignored grows; a god answered stays at its base cost */
+			const int w = (int)bx.wrath;
+			switch (boss) {
+			case SIM_BOSS_ZEUS:
+				countered = fallback; /* scattered: the bolt finds no one */
+				if (!countered) {
+					losses += 2 + w;
+					morale -= 15;
+				} else {
+					dmg += 3; /* the bolt splits his own host     */
+				}
+				break;
+			case SIM_BOSS_POSEIDON:
+				countered = holding; /* locked shields ride the wave */
+				if (!countered) {
+					bx.flood_turns = (uint8_t)(3 + w);
+					losses += 1 + w; /* the wave takes the front rank */
+					morale -= 8;
+				}
+				break;
+			case SIM_BOSS_HADES:
+				countered = charged;
+				if (!countered) {
+					raise = 3 + w;
+				}
+				break;
+			case SIM_BOSS_ARES:
+				countered = rallied; /* a calm line over his fury     */
+				if (!countered) {
+					losses += 3 + w;
+					morale -= 12;
+				} else {
+					dmg += 2; /* the fury turns on his own ranks   */
+				}
+				break;
+			default: /* SIM_BOSS_KRONOS                                */
+				countered = has_order && order == SIM_ORDER_FLANK;
+				if (!countered) {
+					battle_turn++; /* the stolen turn                 */
+					raise = 2 + w; /* and the rewound wounds       */
+				}
+				break;
+			}
+			if (countered) {
+				morale += 4;
+			} else if (bx.wrath < 3u) {
+				bx.wrath++;
+			}
+			OFFER(countered ? SIM_EVT_BOSS_COUNTERED : SIM_EVT_BOSS_STRIKE);
+		} else if (clock == every - 1u) {
+			OFFER(SIM_EVT_BOSS_OMEN);
+		}
+	}
+	if (dmg < 0) {
+		dmg = 0;
+	}
+	const uint8_t before = battle_enemies;
+	battle_enemies = (uint8_t)((battle_enemies > dmg) ? (battle_enemies - dmg)
+	                                                  : 0);
+	const int kills = (int)before - (int)battle_enemies;
+	if (raise > 0 && battle_enemies > 0u) {
+		const int up = (int)battle_enemies + raise;
+		const int cap = (int)sim_battle_enemies_start();
+		battle_enemies = (uint8_t)(up > cap ? cap : up);
+	}
+	ops_counter += 3u; /* rolled damage, enemy update, chips update */
+	if (losses > 0 && bx.relic_guard) {
+		losses--; /* the helm of Hades: the first loss walks away    */
+		bx.relic_guard = false;
+	}
+	for (int i = 0; i < losses && roster > 0u; ++i) {
 		roster--; /* attrition, deterministic per seed, 1 unit op */
+		if (battle_losses < 255u) {
+			battle_losses++;
+		}
+		morale -= 8;
 		ops_counter++;
 	}
+	/* morale: kills lift ours and sink theirs; gods never break        */
+	morale += 2 * kills;
+	if (holding) morale += 6;
+	if (formation_kind == SIM_FORM_CIRCLE) morale += 2;
+	if (terrain == SIM_TERRAIN_DESERT) morale -= 3;
+	morale = clamp_morale(morale);
+	if (boss == SIM_BOSS_NONE) {
+		bx.foe_morale = (uint8_t)clamp_morale((int)bx.foe_morale - 6 * kills);
+		if (!bx.foe_routing && bx.foe_morale < 20u) {
+			bx.foe_routing = true;
+			OFFER(SIM_EVT_FOE_ROUT);
+		}
+	}
+	if (morale == 0 && roster > 0u) {
+		roster--; /* a company breaks and deserts                      */
+		if (battle_losses < 255u) {
+			battle_losses++;
+		}
+		morale = 25;
+		OFFER(SIM_EVT_COLLAPSE);
+	}
+	if (!bx.wavering && morale < 30) {
+		bx.wavering = true;
+		OFFER(SIM_EVT_WAVERING);
+	} else if (bx.wavering && morale >= 40) {
+		bx.wavering = false;
+	}
+	bx.morale = (uint8_t)morale;
+	if (bx.boss_phase == 1u && battle_enemies > 0u &&
+	    (uint32_t)battle_enemies * 2u <= sim_battle_enemies_start()) {
+		bx.boss_phase = 2u; /* enraged: it acts every 2 turns          */
+		OFFER(SIM_EVT_BOSS_PHASE);
+	}
+	for (int a = 0; a < (int)SIM_ABILITIES; ++a) {
+		if (bx.cooldown[a] > 0u) {
+			bx.cooldown[a]--;
+		}
+	}
+	if (evt != SIM_EVT_NONE) {
+		bx.event = evt;
+		event_seq++;
+	}
+	ops_counter += 2u; /* morale + flank/boss block                    */
 	ops_last_step = ops_counter; /* per-frame harness metric */
 	if (battle_enemies == 0u) {
 		/* R11: deterministic seal in 1 frame; no save write here.     */
@@ -814,8 +1382,9 @@ void sim_battle_step(void) {
 		sealed.result = 1u; /* victory */
 		sealed.province_id = battle_province;
 		sealed.province_state = 1u;
-	} else if (battle_turn >= SIM_BATTLE_TURNS) {
-		/* 9 turns cap (spec-04 T7/9): defeat, losses kept visible.    */
+	} else if (roster == 0u || battle_turn >= bx.turn_cap) {
+		/* the turn cap (spec-04 T7/9) or the division is gone:
+		 * defeat, losses kept visible.                                */
 		battle_active = false;
 		sealed.version = 1u;
 		sealed.result = 0u;
@@ -882,9 +1451,18 @@ sim_result_t sim_result_retry(void) {
 	sealed_applied = false;
 	battle_turn = 0u;
 	battle_enemies =
-	    (uint8_t)(6u + 3u * provinces[battle_province].threat);
+	    front_enemies(battle_province, battle_roster_deploy);
+	battle_enemies_open = battle_enemies;
+	/* the companies the first attempt lost come back: Retry is the
+	 * pre-battle state, so attempt 2 starts from the same roster.   */
+	roster = battle_roster_deploy;
+	battle_losses = 0u;
 	battle_roster_start =
 	    (uint8_t)(roster > 255u ? 255u : roster);
+	pending_n = 0u;
+	journal_clear();
+	order_status_valid = false;
 	rng_state = battle_seed; /* attempt 2 == attempt 1 frame-for-frame */
+	battle_open();
 	return SIM_OK;
 }

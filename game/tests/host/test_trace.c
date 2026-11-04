@@ -28,6 +28,7 @@ const char *save_status_text(save_status_t s) {
 	case SAVE_STATUS_NO_CARD: return "NO SAVE CARD";
 	case SAVE_STATUS_VERIFY_FAIL: return "SAVE DATA DAMAGED";
 	case SAVE_STATUS_FULL: return "SAVE CARD FULL";
+	case SAVE_STATUS_SAVING: return "SAVING";
 	}
 	return "";
 }
